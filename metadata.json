@@ -1,0 +1,6 @@
+{
+  "name": "Digital Book Library",
+  "description": "Bengali-first digital book reading and selling app for Bangladesh. Read books for free online, purchase with bKash for protected PDF downloads.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,33 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        (request.auth.token.email == 'zulfiqareee@gmail.com' ||
+         request.auth.token.admin == true);
+    }
+
+    // Public Cover Images
+    match /covers/{coverId} {
+      allow read: if true;
+      allow write: if isAdmin() && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // Original Protected Book PDFs
+    // CRITICAL: Public and unpaid users can NEVER directly read or download raw PDFs from Storage!
+    match /books/{bookId}/{fileName} {
+      // Only server-verified administrator can upload or delete original PDFs
+      allow write: if isAdmin() && request.resource.size < 50 * 1024 * 1024
+                   && request.resource.contentType == 'application/pdf';
+
+      // Direct client download is strictly forbidden; original PDFs are delivered only via
+      // backend server with verified bKash payment token verification.
+      allow read: if false;
+    }
+  }
+}

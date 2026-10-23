@@ -1,0 +1,176 @@
+{
+  "entities": {
+    "Book": {
+      "title": "Book",
+      "description": "Digital book entity with metadata, pricing in BDT, and publication status",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the book"
+        },
+        "titleBn": {
+          "type": "string",
+          "description": "Book title in Bengali",
+          "maxLength": 200
+        },
+        "titleEn": {
+          "type": "string",
+          "description": "Book title in English",
+          "maxLength": 200
+        },
+        "authorBn": {
+          "type": "string",
+          "description": "Author name in Bengali",
+          "maxLength": 100
+        },
+        "authorEn": {
+          "type": "string",
+          "description": "Author name in English",
+          "maxLength": 100
+        },
+        "descriptionBn": {
+          "type": "string",
+          "description": "Description / synopsis in Bengali",
+          "maxLength": 3000
+        },
+        "descriptionEn": {
+          "type": "string",
+          "description": "Description in English",
+          "maxLength": 3000
+        },
+        "category": {
+          "type": "string",
+          "description": "Genre / category identifier",
+          "maxLength": 50
+        },
+        "language": {
+          "type": "string",
+          "description": "Primary language of the book",
+          "enum": ["bn", "en", "bilingual"]
+        },
+        "priceBdt": {
+          "type": "number",
+          "description": "Price in Bangladeshi Taka (0 for free downloads)"
+        },
+        "coverUrl": {
+          "type": "string",
+          "description": "URL or storage path of the book cover image"
+        },
+        "totalPages": {
+          "type": "number",
+          "description": "Total page count"
+        },
+        "fileSizeBytes": {
+          "type": "number",
+          "description": "Original PDF file size in bytes"
+        },
+        "isPublished": {
+          "type": "boolean",
+          "description": "Whether the book is published to the public catalogue"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when book was created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when book was last modified"
+        }
+      },
+      "required": ["titleBn", "authorBn", "category", "priceBdt", "isPublished"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Verified bKash purchase order record",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique order ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Firebase user UID of the purchaser"
+        },
+        "userEmail": {
+          "type": "string",
+          "description": "Email of the purchaser"
+        },
+        "bookId": {
+          "type": "string",
+          "description": "Purchased book ID"
+        },
+        "amountBdt": {
+          "type": "number",
+          "description": "Transaction amount in BDT"
+        },
+        "bkashPaymentId": {
+          "type": "string",
+          "description": "bKash payment gateway ID"
+        },
+        "bkashTrxId": {
+          "type": "string",
+          "description": "Verified bKash Transaction ID from MFS"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["PENDING", "COMPLETED", "FAILED", "CANCELLED"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "bookId", "amountBdt", "status"]
+    },
+    "UserEntitlement": {
+      "title": "UserEntitlement",
+      "description": "Server-verified download entitlement for a specific user and book",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string"
+        },
+        "bookId": {
+          "type": "string"
+        },
+        "orderId": {
+          "type": "string"
+        },
+        "grantedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "downloadCount": {
+          "type": "number"
+        },
+        "lastDownloadedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "bookId", "orderId"]
+    }
+  },
+  "firestore": {
+    "/books/{bookId}": {
+      "schema": { "$ref": "#/entities/Book" },
+      "description": "Catalogue of published and draft books"
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Customer purchase orders verified with bKash"
+    },
+    "/users/{userId}/entitlements/{bookId}": {
+      "schema": { "$ref": "#/entities/UserEntitlement" },
+      "description": "User specific book ownership and download entitlements"
+    }
+  }
+}

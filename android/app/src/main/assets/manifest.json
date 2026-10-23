@@ -1,0 +1,17 @@
+{
+  "name": "Digital Book Library - ডিজিটাল বই লাইব্রেরি",
+  "short_name": "বই লাইব্রেরি",
+  "description": "বাংলা ডিজিটাল বই পড়ুন ফ্রিতে এবং বিকাশের মাধ্যমে ডাউনলোড করুন।",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#064e3b",
+  "theme_color": "#047857",
+  "icons": [
+    {
+      "src": "/assets/aistudio/Screenshot_2026-10-23-15-56-29-561_com.android.chrome_405d7d5f.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}

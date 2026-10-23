@@ -236,6 +236,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         var path = uri.path?.trimStart('/') ?: ""
+
+        // Never intercept API calls with static web assets or HTML fallbacks
+        if (path.startsWith("api/")) {
+            return null
+        }
+
         if (path.isEmpty() || path == "assets" || path == "assets/" || path == "index.html" || path == "assets/index.html") {
             path = "index.html"
         }
@@ -269,7 +275,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Fallback for SPA routing: if requesting a route path without file extension, serve index.html
-        if (stream == null) {
+        if (stream == null && !path.startsWith("api/")) {
             val lastSegment = uri.lastPathSegment ?: ""
             if (!lastSegment.contains(".")) {
                 try {

@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="en">
+<html lang="bn">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Digital Book Library - ডিজিটাল বই লাইব্রেরি</title>
     <meta name="description" content="Bengali-first digital book reading and selling platform for Bangladesh. Read books online for free, download verified PDFs with bKash." />
     <meta property="og:title" content="Digital Book Library - ডিজিটাল বই লাইব্রেরি" />
@@ -10,11 +10,39 @@
     <meta property="og:type" content="website" />
     <meta name="theme-color" content="#047857" />
     <link rel="manifest" href="./manifest.json" />
-    <script type="module" crossorigin src="./assets/index-DWoePigu.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-C8zm1F4o.css">
+    <script type="module" crossorigin src="./assets/index-CJqunuUP.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-4l1uJoh4.css">
   </head>
-  <body>
-    <div id="root"></div>
+  <body class="bg-slate-50 text-slate-900 m-0 p-0 antialiased selection:bg-emerald-200">
+    <div id="root">
+      <!-- Fast native-like initial loader while React bundle mounts -->
+      <div id="app-loading-fallback" style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #064e3b; color: #ffffff; font-family: system-ui, -apple-system, sans-serif; padding: 24px; text-align: center; box-sizing: border-box;">
+        <div style="width: 64px; height: 64px; border-radius: 20px; background: rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center; margin-bottom: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #6ee7b7;">
+            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"></path>
+            <path d="M6 6h10"></path>
+            <path d="M6 10h10"></path>
+          </svg>
+        </div>
+        <h1 style="font-size: 22px; font-weight: 800; margin: 0 0 8px 0; letter-spacing: -0.02em;">ডিজিটাল বই লাইব্রেরি</h1>
+        <p style="font-size: 14px; opacity: 0.9; margin: 0 0 24px 0; font-weight: 500;">বাংলা ডিজিটাল গ্রন্থালয় · লোড হচ্ছে...</p>
+        <div style="width: 38px; height: 38px; border: 3px solid rgba(255,255,255,0.25); border-top-color: #34d399; border-radius: 50%; animation: dlib-spin 0.9s cubic-bezier(0.5, 0.1, 0.5, 0.9) infinite;"></div>
+        <div id="app-loading-error" style="display: none; margin-top: 24px; background: #fee2e2; color: #991b1b; padding: 14px 18px; border-radius: 12px; font-size: 13px; max-width: 320px; text-align: center;">
+          <p id="app-loading-error-msg" style="margin: 0 0 10px 0; font-weight: 600;">অ্যাপ খুলতে সমস্যা হচ্ছে</p>
+          <button onclick="window.location.reload()" style="background: #047857; color: #fff; border: none; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer;">পুনরায় লোড করুন</button>
+        </div>
+      </div>
+      <style>@keyframes dlib-spin{to{transform:rotate(360deg)}}</style>
+      <script>
+        window.addEventListener('error', function(e) {
+          var errDiv = document.getElementById('app-loading-error');
+          var errMsg = document.getElementById('app-loading-error-msg');
+          if (errDiv && errMsg) {
+            errDiv.style.display = 'block';
+            errMsg.textContent = 'ত্রুটি: ' + (e.message || 'JavaScript Load Failure');
+          }
+        });
+      </script>
+    </div>
   </body>
 </html>
-

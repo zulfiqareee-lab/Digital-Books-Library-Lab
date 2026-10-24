@@ -382,7 +382,7 @@ async function startServer() {
     });
   });
 
-  // Google Drive Direct Stream Proxy (handles CORS, range streaming, and high-speed viewing)
+  // Google Drive Direct Stream Proxy (handles CORS, range streaming, cookies, and confirmation bypass)
   app.get('/api/drive-stream/:fileId', async (req: Request, res: Response) => {
     const { fileId } = req.params;
     if (!fileId || !/^[a-zA-Z0-9_-]{15,100}$/.test(fileId)) {
@@ -390,29 +390,51 @@ async function startServer() {
     }
 
     try {
-      // lh3.googleusercontent.com/d/ direct file export bypasses Google virus confirmation page
-      const directUrl = `https://lh3.googleusercontent.com/d/${fileId}`;
-      const exportUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-
       const forwardHeaders: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'application/pdf,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8'
       };
       if (req.headers.range) {
         forwardHeaders['Range'] = req.headers.range as string;
       }
 
-      let driveRes = await fetch(directUrl, { headers: forwardHeaders });
+      // 1. Try Google Content CDN direct file endpoint
+      const directUrl = `https://lh3.googleusercontent.com/d/${fileId}`;
+      let driveRes = await fetch(directUrl, { headers: forwardHeaders, redirect: 'follow' });
       let contentType = driveRes.headers.get('content-type') || '';
 
+      // 2. If direct endpoint returned HTML/error, try export download with confirm=t
       if (!driveRes.ok || contentType.includes('text/html')) {
-        driveRes = await fetch(exportUrl, { headers: forwardHeaders });
+        const exportUrl = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
+        driveRes = await fetch(exportUrl, { headers: forwardHeaders, redirect: 'follow' });
         contentType = driveRes.headers.get('content-type') || '';
+
+        // 3. If Google returned an HTML virus scan confirmation page, extract the confirm token
+        if (contentType.includes('text/html')) {
+          const htmlText = await driveRes.text();
+          const matchConfirm = htmlText.match(/confirm=([0-9A-Za-z_-]+)/);
+          const cookieHeader = driveRes.headers.get('set-cookie');
+
+          if (matchConfirm && matchConfirm[1]) {
+            const confirmedUrl = `https://drive.google.com/uc?export=download&confirm=${matchConfirm[1]}&id=${fileId}`;
+            const secondaryHeaders = { ...forwardHeaders };
+            if (cookieHeader) secondaryHeaders['Cookie'] = cookieHeader.split(';')[0];
+
+            driveRes = await fetch(confirmedUrl, { headers: secondaryHeaders, redirect: 'follow' });
+            contentType = driveRes.headers.get('content-type') || '';
+          }
+        }
       }
 
+      // If still returning HTML or 403, Google has blocked automated proxying for this file ID.
+      // Redirect to Google Drive preview or instruct client to use the official embedded viewer
       if (!driveRes.ok || contentType.includes('text/html')) {
         return res.status(403).json({
           success: false,
-          message: 'গুগল ড্রাইভ ফাইল অ্যাক্সেস করা যায়নি। দয়া করে নিশ্চিত করুন ফাইলের শেয়ারিং অপশন "Anyone with the link can view" (যেকোনো ব্যক্তি যার কাছে লিংক আছে) হিসেবে সেট করা আছে।'
+          useEmbedViewer: true,
+          previewUrl: `https://drive.google.com/file/d/${fileId}/preview`,
+          message: 'গুগল ড্রাইভে ফাইলটি সুরক্ষিত রয়েছে। ইন-অ্যাপ ড্রাইভ ভিউয়ারের মাধ্যমে পাতাগুলো প্রদর্শিত হবে।'
         });
       }
 
@@ -440,7 +462,12 @@ async function startServer() {
       nodeStream.pipe(res);
     } catch (err: any) {
       console.error('[Drive Stream Error]:', err);
-      res.status(500).json({ success: false, message: 'গুগল ড্রাইভ স্ট্রিম ব্যর্থ: ' + err.message });
+      res.status(500).json({
+        success: false,
+        useEmbedViewer: true,
+        previewUrl: `https://drive.google.com/file/d/${fileId}/preview`,
+        message: 'গুগল ড্রাইভ স্ট্রিম ব্যর্থ: ' + err.message
+      });
     }
   });
 
@@ -776,6 +803,14 @@ async function startServer() {
       id: existing.id,
       updatedAt: new Date().toISOString()
     };
+
+    if (req.body.driveFileId) {
+      updated.driveFileId = req.body.driveFileId;
+      updated.isDriveHosted = true;
+      updated.hasPdfDocument = true;
+      updated.pdfUrl = `/api/drive-stream/${req.body.driveFileId}`;
+      updated.storageIdentifier = `drive:${req.body.driveFileId}`;
+    }
 
     booksDb.set(existing.id, updated);
     res.json({ success: true, message: 'বই সফলভাবে হালনাগাদ করা হয়েছে।', book: updated });

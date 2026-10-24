@@ -3,7 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import { useLibrary } from '../context/LibraryContext';
 import { adminUpdateBook, adminDeleteBook } from '../services/api';
 import { CATEGORIES } from '../data/initialBooks';
-import { ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, CheckCircle2, AlertCircle, Globe, Link2 } from 'lucide-react';
+import { extractGoogleDriveId } from '../services/api';
 
 export const EditBookScreen: React.FC = () => {
   const { user, isAdmin } = useAuth();
@@ -33,6 +34,7 @@ export const EditBookScreen: React.FC = () => {
   const [category, setCategory] = useState(book.category);
   const [priceBdt, setPriceBdt] = useState<number>(book.priceBdt);
   const [descriptionBn, setDescriptionBn] = useState(book.descriptionBn || '');
+  const [driveUrl, setDriveUrl] = useState(book.driveFileId ? `https://drive.google.com/file/d/${book.driveFileId}/view` : '');
   const [isPublished, setIsPublished] = useState(book.isPublished);
 
   const [isSaving, setIsSaving] = useState(false);
@@ -43,6 +45,8 @@ export const EditBookScreen: React.FC = () => {
     setIsSaving(true);
     setErrorMsg(null);
     try {
+      const resolvedDriveId = driveUrl ? extractGoogleDriveId(driveUrl) : undefined;
+
       await adminUpdateBook(
         book.id,
         {
@@ -53,7 +57,10 @@ export const EditBookScreen: React.FC = () => {
           category,
           priceBdt: Number(priceBdt),
           descriptionBn,
-          isPublished
+          isPublished,
+          driveFileId: resolvedDriveId || undefined,
+          isDriveHosted: Boolean(resolvedDriveId),
+          storageIdentifier: resolvedDriveId ? `drive:${resolvedDriveId}` : book.storageIdentifier
         },
         user.email
       );
@@ -209,6 +216,29 @@ export const EditBookScreen: React.FC = () => {
             onChange={e => setDescriptionBn(e.target.value)}
             className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-hidden"
           />
+        </div>
+
+        {/* Google Drive Link Field */}
+        <div className="p-4 bg-sky-50/70 rounded-2xl border border-sky-200 space-y-2">
+          <label className="block text-xs font-bold text-slate-900 flex items-center gap-1.5">
+            <Globe className="w-4 h-4 text-sky-600" />
+            <span>{isBn ? 'গুগল ড্রাইভ শেয়ার লিংক (ক্লাউড হোস্টিং)' : 'Google Drive Share Link'}</span>
+          </label>
+          <div className="relative">
+            <Link2 className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="url"
+              value={driveUrl}
+              onChange={e => setDriveUrl(e.target.value)}
+              placeholder="https://drive.google.com/file/d/1A2B3C.../view?usp=sharing"
+              className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:border-sky-600 focus:outline-hidden font-mono"
+            />
+          </div>
+          <p className="text-[11px] text-slate-500">
+            {isBn
+              ? 'গুগল ড্রাইভ লিংক দেওয়া থাকলে বইটি ক্লাউড থেকে সরাসরি ইন-অ্যাপ ফুল-স্ক্রিনে প্রদর্শিত হবে।'
+              : 'When provided, the PDF will be served directly from your Google Drive.'}
+          </p>
         </div>
 
         <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200">

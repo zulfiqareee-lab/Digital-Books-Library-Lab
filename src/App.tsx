@@ -72,10 +72,10 @@ function AppContent() {
   const isReader = currentScreen === 'pdf_reader';
 
   return (
-    <div className="min-h-full flex flex-col justify-between">
+    <div className="min-h-full w-full max-w-full overflow-x-hidden flex flex-col justify-between">
       {!isReader && <TopBar />}
 
-      <main className="flex-1 flex flex-col">
+      <main className="flex-1 w-full max-w-full overflow-x-hidden flex flex-col">
         {renderScreen()}
       </main>
 

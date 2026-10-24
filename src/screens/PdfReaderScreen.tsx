@@ -21,7 +21,10 @@ import {
   StretchHorizontal,
   Maximize,
   Eye,
-  EyeOff
+  EyeOff,
+  Globe,
+  ExternalLink,
+  RefreshCw
 } from 'lucide-react';
 
 export const PdfReaderScreen: React.FC = () => {
@@ -29,6 +32,10 @@ export const PdfReaderScreen: React.FC = () => {
 
   const isBn = language === 'bn';
   const book = selectedBook;
+
+  // Resolve Google Drive file ID if hosted on Drive
+  const driveFileId = book?.driveFileId || (book?.storageIdentifier?.startsWith('drive:') ? book.storageIdentifier.replace('drive:', '') : null);
+  const isDriveHosted = Boolean(driveFileId || book?.isDriveHosted);
 
   const [currentPage, setCurrentPage] = useState<number>(readerPage || 1);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
@@ -40,10 +47,12 @@ export const PdfReaderScreen: React.FC = () => {
   const [isLoadingPage, setIsLoadingPage] = useState(false);
   const [showToc, setShowToc] = useState(false);
 
-  // PDF Source and Viewer Mode
+  // PDF Source and Viewer Mode ('drive' | 'pdf' | 'text')
   const [pdfSource, setPdfSource] = useState<string | Blob | ArrayBuffer | null>(null);
   const [isPdfLoading, setIsPdfLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'pdf' | 'text'>('pdf');
+  const [viewMode, setViewMode] = useState<'drive' | 'pdf' | 'text'>(
+    isDriveHosted ? 'drive' : 'pdf'
+  );
   const [totalPdfPages, setTotalPdfPages] = useState<number>(book?.totalPages || 100);
 
   const totalPages = totalPdfPages || book?.totalPages || 100;
@@ -62,6 +71,13 @@ export const PdfReaderScreen: React.FC = () => {
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
 
+  // Update default view mode when book changes
+  useEffect(() => {
+    if (isDriveHosted && driveFileId) {
+      setViewMode('drive');
+    }
+  }, [book?.id, isDriveHosted, driveFileId]);
+
   // 1. Fetch real PDF source (IndexedDB local blob or remote server URL)
   useEffect(() => {
     if (!book) return;
@@ -73,10 +89,15 @@ export const PdfReaderScreen: React.FC = () => {
       if (!isCancelled) {
         if (src) {
           setPdfSource(src);
-          setViewMode('pdf');
+          // If not drive hosted, use canvas pdf
+          if (!isDriveHosted) {
+            setViewMode('pdf');
+          }
         } else {
           setPdfSource(null);
-          setViewMode('text');
+          if (!isDriveHosted) {
+            setViewMode('text');
+          }
         }
         setIsPdfLoading(false);
       }
@@ -84,7 +105,9 @@ export const PdfReaderScreen: React.FC = () => {
       console.warn('Could not locate PDF binary:', err);
       if (!isCancelled) {
         setPdfSource(null);
-        setViewMode('text');
+        if (!isDriveHosted) {
+          setViewMode('text');
+        }
         setIsPdfLoading(false);
       }
     });
@@ -92,7 +115,7 @@ export const PdfReaderScreen: React.FC = () => {
     return () => {
       isCancelled = true;
     };
-  }, [book]);
+  }, [book, isDriveHosted]);
 
   // 2. Fetch fallback protected text page if in text view mode
   useEffect(() => {
@@ -161,7 +184,7 @@ export const PdfReaderScreen: React.FC = () => {
 
   if (!book) {
     return (
-      <div className="p-12 text-center">
+      <div className="p-12 text-center w-full max-w-full">
         <p className="text-slate-500 mb-4">{isBn ? 'পড়ার জন্য কোনো বই নির্বাচন করা হয়নি।' : 'No book selected for reading.'}</p>
         <button
           onClick={() => navigateTo('catalogue')}
@@ -187,12 +210,16 @@ export const PdfReaderScreen: React.FC = () => {
   };
 
   return (
-    <div className={`min-h-screen flex flex-col ${canvasBackground[readerTheme]} select-none relative transition-colors duration-200 ${isFullScreen ? 'h-screen overflow-hidden' : ''}`}>
+    <div
+      className={`min-h-screen w-full max-w-full overflow-x-hidden flex flex-col ${
+        canvasBackground[readerTheme]
+      } select-none relative transition-colors duration-200 ${isFullScreen ? 'h-screen overflow-hidden' : ''}`}
+    >
       {/* Top Reader Navigation Bar (hidden in Immersive Mode) */}
       {!isImmersive && (
-        <header className="sticky top-0 z-40 bg-slate-900 text-white px-3 sm:px-6 py-2 flex items-center justify-between gap-2 sm:gap-3 shadow-md">
+        <header className="sticky top-0 z-40 bg-slate-900 text-white px-2.5 sm:px-6 py-2 flex items-center justify-between gap-1.5 sm:gap-3 shadow-md w-full max-w-full overflow-hidden">
           {/* Left: Back & Title */}
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 max-w-[150px] sm:max-w-xs">
             <button
               onClick={() => {
                 if (isFullScreen && document.exitFullscreen) {
@@ -200,49 +227,90 @@ export const PdfReaderScreen: React.FC = () => {
                 }
                 navigateTo('book_detail', { book });
               }}
-              className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
+              className="p-1 sm:p-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white transition-colors shrink-0"
               title={isBn ? 'বইয়ের বিবরণে ফিরুন' : 'Back to book details'}
             >
-              <ArrowLeft className="w-5 h-5" />
+              <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
             <div className="min-w-0">
               <h1 className="text-xs sm:text-sm font-bold truncate text-white leading-tight">
                 {isBn ? book.titleBn : book.titleEn}
               </h1>
-              <p className="text-[10px] text-emerald-400 font-medium truncate flex items-center gap-1.5">
+              <p className="text-[10px] text-emerald-400 font-medium truncate flex items-center gap-1">
                 <span>{book.authorBn}</span>
-                <span>•</span>
-                <span>{isBn ? 'সুরক্ষিত উন্মুক্ত পাঠকক্ষ' : 'Protected Free Reader'}</span>
+                {isDriveHosted && (
+                  <span className="text-sky-300 font-bold bg-sky-950/80 px-1 rounded text-[9px]">Google Drive</span>
+                )}
               </p>
             </div>
           </div>
 
-          {/* Center: Page Controls */}
-          <div className="hidden md:flex items-center gap-2 bg-slate-800 px-3 py-1 rounded-xl border border-slate-700 text-xs">
-            <button
-              onClick={handlePrevPage}
-              disabled={currentPage <= 1}
-              className="p-1 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="font-mono tabular-nums text-slate-200 font-semibold px-1">
-              {currentPage} / {totalPages}
-            </span>
-            <button
-              onClick={handleNextPage}
-              disabled={currentPage >= totalPages}
-              className="p-1 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
+          {/* Center: Page Controls (visible on tablets & desktops) */}
+          {viewMode !== 'drive' && (
+            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-3 py-1 rounded-xl border border-slate-700 text-xs">
+              <button
+                onClick={handlePrevPage}
+                disabled={currentPage <= 1}
+                className="p-1 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="font-mono tabular-nums text-slate-200 font-semibold px-1">
+                {currentPage} / {totalPages}
+              </span>
+              <button
+                onClick={handleNextPage}
+                disabled={currentPage >= totalPages}
+                className="p-1 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
 
           {/* Right: Controls & Screen Modes */}
-          <div className="flex items-center gap-1 sm:gap-2">
-            {/* Fit Width / Fit Page Mode Toggle */}
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+            {/* Mode Switcher: Google Drive vs PDF Canvas vs Text View */}
+            <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700 shrink-0">
+              {driveFileId && (
+                <button
+                  onClick={() => setViewMode('drive')}
+                  className={`px-1.5 sm:px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
+                    viewMode === 'drive' ? 'bg-sky-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title={isBn ? 'গুগল ড্রাইভ অফিসিয়াল রিডার' : 'Google Drive Reader'}
+                >
+                  <Globe className="w-3.5 h-3.5 text-sky-300" />
+                  <span className="hidden sm:inline">{isBn ? 'ড্রাইভ রিডার' : 'Drive'}</span>
+                </button>
+              )}
+              {pdfSource && (
+                <button
+                  onClick={() => setViewMode('pdf')}
+                  className={`px-1.5 sm:px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
+                    viewMode === 'pdf' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title={isBn ? 'ক্যানভাস পাতা' : 'Canvas Pages'}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">{isBn ? 'ক্যানভাস' : 'Canvas'}</span>
+                </button>
+              )}
+              <button
+                onClick={() => setViewMode('text')}
+                className={`px-1.5 sm:px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
+                  viewMode === 'text' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+                title={isBn ? 'টেক্সট মোড' : 'Text'}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{isBn ? 'টেক্সট' : 'Text'}</span>
+              </button>
+            </div>
+
+            {/* Fit Width / Fit Page Mode Toggle (Only in Canvas mode) */}
             {viewMode === 'pdf' && (
-              <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+              <div className="hidden sm:flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
                 <button
                   onClick={() => setFitMode('width')}
                   className={`px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
@@ -266,48 +334,24 @@ export const PdfReaderScreen: React.FC = () => {
               </div>
             )}
 
-            {/* Mode Switcher: PDF Page Canvas vs Text View */}
-            {pdfSource && (
-              <div className="hidden sm:flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
-                <button
-                  onClick={() => setViewMode('pdf')}
-                  className={`px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
-                    viewMode === 'pdf' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
-                  }`}
-                  title={isBn ? 'পিডিএফ পাতা' : 'PDF Pages'}
-                >
-                  <Layers className="w-3 h-3" />
-                  <span className="hidden md:inline">{isBn ? 'পিডিএফ' : 'PDF'}</span>
-                </button>
-                <button
-                  onClick={() => setViewMode('text')}
-                  className={`px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
-                    viewMode === 'text' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
-                  }`}
-                  title={isBn ? 'টেক্সট মোড' : 'Text'}
-                >
-                  <FileText className="w-3 h-3" />
-                  <span className="hidden md:inline">{isBn ? 'টেক্সট' : 'Text'}</span>
-                </button>
-              </div>
+            {/* Table of contents toggle (Canvas / Text) */}
+            {viewMode !== 'drive' && (
+              <button
+                onClick={() => setShowToc(!showToc)}
+                className={`p-1.5 rounded-lg transition-colors ${
+                  showToc ? 'bg-emerald-600 text-white' : 'hover:bg-slate-800 text-slate-300'
+                }`}
+                title={isBn ? 'সূচিপত্র' : 'Table of Contents'}
+              >
+                <List className="w-4 h-4" />
+              </button>
             )}
 
-            {/* Table of contents toggle */}
-            <button
-              onClick={() => setShowToc(!showToc)}
-              className={`p-1.5 sm:p-2 rounded-lg transition-colors ${
-                showToc ? 'bg-emerald-600 text-white' : 'hover:bg-slate-800 text-slate-300'
-              }`}
-              title={isBn ? 'সূচিপত্র' : 'Table of Contents'}
-            >
-              <List className="w-4 h-4" />
-            </button>
-
             {/* Theme switcher */}
-            <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+            <div className="hidden xs:flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
               <button
                 onClick={() => setReaderTheme('light')}
-                className={`p-1.5 rounded text-xs ${
+                className={`p-1 sm:p-1.5 rounded text-xs ${
                   readerTheme === 'light' ? 'bg-slate-700 text-amber-300' : 'text-slate-400 hover:text-white'
                 }`}
                 title="Light"
@@ -316,7 +360,7 @@ export const PdfReaderScreen: React.FC = () => {
               </button>
               <button
                 onClick={() => setReaderTheme('sepia')}
-                className={`px-1.5 py-1 rounded text-[10px] font-bold ${
+                className={`px-1 sm:px-1.5 py-1 rounded text-[10px] font-bold ${
                   readerTheme === 'sepia' ? 'bg-amber-100 text-amber-900' : 'text-slate-400 hover:text-white'
                 }`}
                 title="Sepia"
@@ -325,7 +369,7 @@ export const PdfReaderScreen: React.FC = () => {
               </button>
               <button
                 onClick={() => setReaderTheme('dark')}
-                className={`p-1.5 rounded text-xs ${
+                className={`p-1 sm:p-1.5 rounded text-xs ${
                   readerTheme === 'dark' ? 'bg-slate-700 text-sky-400' : 'text-slate-400 hover:text-white'
                 }`}
                 title="Dark"
@@ -334,58 +378,22 @@ export const PdfReaderScreen: React.FC = () => {
               </button>
             </div>
 
-            {/* Zoom controls */}
-            <div className="hidden sm:flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
-              <button
-                onClick={() => {
-                  setFitMode('free');
-                  setZoomLevel(z => Math.max(70, z - 15));
-                }}
-                className="p-1.5 text-slate-400 hover:text-white"
-                title="Zoom Out"
-              >
-                <ZoomOut className="w-3.5 h-3.5" />
-              </button>
-              <span className="text-[11px] font-mono px-1 text-slate-300 hidden md:inline">{zoomLevel}%</span>
-              <button
-                onClick={() => {
-                  setFitMode('free');
-                  setZoomLevel(z => Math.min(220, z + 15));
-                }}
-                className="p-1.5 text-slate-400 hover:text-white"
-                title="Zoom In"
-              >
-                <ZoomIn className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            {/* Full Screen Toggle (Always visible on mobile & desktop) */}
+            {/* Full Screen Toggle (Mobile & Desktop) */}
             <button
               onClick={toggleFullScreen}
-              className={`p-1.5 sm:p-2 rounded-lg transition-colors ${
+              className={`p-1.5 rounded-lg transition-colors ${
                 isFullScreen ? 'bg-emerald-600 text-white' : 'hover:bg-slate-800 text-slate-300 hover:text-white'
               }`}
-              title={isFullScreen ? (isBn ? 'ফুল স্ক্রিন বন্ধ করুন' : 'Exit Full Screen') : (isBn ? 'ফুল স্ক্রিন মোড' : 'Full Screen')}
+              title={isFullScreen ? (isBn ? 'ফুল স্ক্রিন বন্ধ' : 'Exit Full Screen') : (isBn ? 'ফুল স্ক্রিন' : 'Full Screen')}
             >
               {isFullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
-
-            {/* Immersive Distraction-Free Toggle in Fullscreen */}
-            {isFullScreen && (
-              <button
-                onClick={() => setIsImmersive(true)}
-                className="p-1.5 sm:p-2 rounded-lg hover:bg-slate-800 text-emerald-400 hover:text-emerald-300 transition-colors"
-                title={isBn ? 'সম্পূর্ণ পাতা পড়ার মোড (টুলবার লুকান)' : 'Distraction-free reading'}
-              >
-                <EyeOff className="w-4 h-4" />
-              </button>
-            )}
 
             {/* Download Original PDF Button */}
             {isOwned ? (
               <button
                 onClick={() => navigateTo('payment_result', { book })}
-                className="px-2.5 sm:px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white text-xs font-semibold flex items-center gap-1 shadow-sm transition-colors whitespace-nowrap"
+                className="px-2 sm:px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white text-[11px] sm:text-xs font-semibold flex items-center gap-1 shadow-sm transition-colors whitespace-nowrap"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{isBn ? 'ডাউনলোড' : 'Download'}</span>
@@ -393,9 +401,9 @@ export const PdfReaderScreen: React.FC = () => {
             ) : (
               <button
                 onClick={() => navigateTo('bkash_checkout', { book })}
-                className="px-2.5 sm:px-3 py-1.5 rounded-lg bg-pink-700 hover:bg-pink-600 text-white text-xs font-bold flex items-center gap-1 shadow-sm transition-colors whitespace-nowrap"
+                className="px-2 sm:px-2.5 py-1.5 rounded-lg bg-pink-700 hover:bg-pink-600 text-white text-[11px] sm:text-xs font-bold flex items-center gap-1 shadow-sm transition-colors whitespace-nowrap"
               >
-                <Download className="w-3.5 h-3.5" />
+                <Download className="w-3 h-3" />
                 <span>{isBn ? `বিকাশ ৳${book.priceBdt}` : `bKash`}</span>
               </button>
             )}
@@ -403,51 +411,10 @@ export const PdfReaderScreen: React.FC = () => {
         </header>
       )}
 
-      {/* Immersive Floating Bar (shown when header/footer are hidden in Fullscreen) */}
-      {isImmersive && (
-        <div className="fixed top-3 right-3 z-50 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md text-white px-3 py-1.5 rounded-full border border-slate-700 shadow-2xl animate-fade-in">
-          <span className="text-xs font-mono font-bold text-emerald-400 mr-1">
-            {currentPage} / {totalPages}
-          </span>
-          <button
-            onClick={handlePrevPage}
-            disabled={currentPage <= 1}
-            className="p-1 hover:bg-slate-800 rounded disabled:opacity-30"
-            title="Previous"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <button
-            onClick={handleNextPage}
-            disabled={currentPage >= totalPages}
-            className="p-1 hover:bg-slate-800 rounded disabled:opacity-30"
-            title="Next"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-          <div className="w-[1px] h-3.5 bg-slate-700 mx-1" />
-          <button
-            onClick={() => setFitMode(f => f === 'width' ? 'page' : 'width')}
-            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white"
-            title={fitMode === 'width' ? 'Fit Page' : 'Fit Width'}
-          >
-            {fitMode === 'width' ? <Maximize className="w-3.5 h-3.5" /> : <StretchHorizontal className="w-3.5 h-3.5" />}
-          </button>
-          <button
-            onClick={() => setIsImmersive(false)}
-            className="p-1 hover:bg-slate-800 rounded text-emerald-400 hover:text-white ml-1 flex items-center gap-1 text-[11px] font-medium"
-            title="Show Controls"
-          >
-            <Eye className="w-3.5 h-3.5" />
-            <span>টুলবার</span>
-          </button>
-        </div>
-      )}
-
-      {/* Main Reading Canvas (Unconstrained width so PDF expands to 100% of the screen) */}
+      {/* Main Reading Viewport - Strictly constrained to prevent horizontal scrolling */}
       <main
-        className={`flex-1 overflow-auto flex flex-col items-center justify-start relative transition-all duration-150 ${
-          isFullScreen ? 'p-0 sm:p-2' : 'p-2 sm:p-5'
+        className={`flex-1 w-full max-w-full overflow-y-auto overflow-x-hidden flex flex-col items-center justify-start relative transition-all duration-150 ${
+          isFullScreen ? 'p-0 sm:p-2' : 'p-1.5 sm:p-4'
         }`}
       >
         {/* Table of Contents Drawer */}
@@ -492,15 +459,62 @@ export const PdfReaderScreen: React.FC = () => {
           </aside>
         )}
 
-        {/* View Content: PDF Canvas or Structured Text Fallback */}
-        {viewMode === 'pdf' && pdfSource ? (
+        {/* ======================================================== */}
+        {/* MODE 1: Google Drive Official Embedded Reader (Guaranteed 100% Reliable) */}
+        {/* ======================================================== */}
+        {viewMode === 'drive' && driveFileId && (
+          <div className="w-full flex-1 flex flex-col items-center justify-start max-w-full overflow-hidden p-1 sm:p-2">
+            {/* Quick Helper Banner */}
+            <div className="w-full max-w-5xl mb-2 px-3 py-1.5 bg-slate-900/90 border border-slate-700 rounded-xl flex items-center justify-between text-xs text-slate-300 gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Globe className="w-4 h-4 text-sky-400 shrink-0" />
+                <span className="truncate font-semibold text-slate-100">
+                  {isBn ? 'গুগল ড্রাইভ ক্লাউড ভিউয়ার · সরাসরি বইটির প্রতিটি পৃষ্ঠা পাঠ করুন' : 'Google Drive Cloud Viewer · Direct Page Stream'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href={`https://drive.google.com/file/d/${driveFileId}/view`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-sky-400 hover:text-sky-300 bg-sky-950/70 px-2.5 py-1 rounded-lg border border-sky-800 transition-colors"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  <span className="hidden sm:inline">{isBn ? 'ড্রাইভ উইন্ডো' : 'Drive Window'}</span>
+                </a>
+              </div>
+            </div>
+
+            {/* Embedded Responsive Google Drive Preview Iframe */}
+            <div
+              className={`w-full max-w-5xl rounded-2xl overflow-hidden border border-slate-700/80 bg-white shadow-2xl relative transition-all ${
+                isFullScreen
+                  ? 'h-[calc(100vh-10px)] max-w-none rounded-none border-0'
+                  : 'h-[calc(100vh-140px)] min-h-[500px]'
+              }`}
+            >
+              <iframe
+                src={`https://drive.google.com/file/d/${driveFileId}/preview`}
+                className="w-full h-full border-0 block"
+                allow="autoplay"
+                allowFullScreen
+                title={book.titleBn}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* MODE 2: PDF Canvas Viewer */}
+        {/* ======================================================== */}
+        {viewMode === 'pdf' && pdfSource && (
           <div
-            className={`w-full flex flex-col items-center transition-all ${
+            className={`w-full max-w-full flex flex-col items-center overflow-hidden transition-all ${
               isFullScreen
                 ? 'max-w-none px-0'
                 : fitMode === 'width'
                 ? 'max-w-5xl px-0 sm:px-2'
-                : 'max-w-3xl px-2'
+                : 'max-w-3xl px-1 sm:px-2'
             }`}
           >
             <PdfCanvasViewer
@@ -513,16 +527,24 @@ export const PdfReaderScreen: React.FC = () => {
               watermarkText={`Digital Book Library • Read-Only Online • ${book.titleBn}`}
               onTotalPagesLoaded={(pages) => setTotalPdfPages(pages)}
               onError={(err) => {
-                console.warn('PDF canvas error, fallback to text:', err);
-                setViewMode('text');
+                console.warn('PDF canvas error, fallback to drive or text:', err);
+                if (driveFileId) {
+                  setViewMode('drive');
+                } else {
+                  setViewMode('text');
+                }
               }}
             />
           </div>
-        ) : (
-          /* Server-Rendered / Local Protected Text Reading Page */
+        )}
+
+        {/* ======================================================== */}
+        {/* MODE 3: Structured Text Reader Page */}
+        {/* ======================================================== */}
+        {viewMode === 'text' && (
           <div
             style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'top center' }}
-            className={`relative w-full max-w-2xl min-h-[640px] p-8 sm:p-14 rounded-2xl border shadow-xl transition-all duration-150 flex flex-col justify-between my-2 ${themeStyles[readerTheme]}`}
+            className={`relative w-full max-w-2xl min-h-[640px] p-6 sm:p-14 rounded-2xl border shadow-xl transition-all duration-150 flex flex-col justify-between my-2 max-w-full overflow-hidden ${themeStyles[readerTheme]}`}
           >
             {/* Subtle Anti-Copy Security Watermark Stamp */}
             <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center opacity-[0.035] overflow-hidden rotate-[-25deg]">
@@ -566,16 +588,16 @@ export const PdfReaderScreen: React.FC = () => {
                   <p className="font-bold text-sm">{book.titleBn} · পৃষ্ঠা {currentPage}</p>
                   <p className="text-xs leading-relaxed max-w-md mx-auto">
                     {isBn
-                      ? 'আপনি অনলাইনে বিনামূল্যে ডিজিটাল বুক লাইব্রেরির মাধ্যমে বইটি পাঠ করছেন। মূল হাই-রেজোলিউশন মুদ্রণ সংস্করণ ডিভাইসে অফলাইনে সংরক্ষণ করতে বিকাশ দিয়ে ক্রয় সম্পন্ন করুন।'
+                      ? 'অনলাইনে বিনামূল্যে ডিজিটাল বুক লাইব্রেরির মাধ্যমে বইটি পাঠ করছেন। মূল হাই-রেজোলিউশন মুদ্রণ সংস্করণ ডিভাইসে অফলাইনে সংরক্ষণ করতে বিকাশ দিয়ে ক্রয় সম্পন্ন করুন।'
                       : 'You are reading this book online for free. To keep an offline high-resolution PDF copy, complete a verified bKash purchase.'}
                   </p>
-                  {pdfSource && (
+                  {driveFileId && (
                     <button
-                      onClick={() => setViewMode('pdf')}
-                      className="px-4 py-2 bg-emerald-700 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 shadow"
+                      onClick={() => setViewMode('drive')}
+                      className="px-4 py-2 bg-sky-700 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 shadow"
                     >
-                      <Layers className="w-4 h-4" />
-                      <span>{isBn ? 'আসল পিডিএফ পেজে ফিরে যান' : 'Switch to Original PDF Pages'}</span>
+                      <Globe className="w-4 h-4" />
+                      <span>{isBn ? 'গুগল ড্রাইভ অফিসিয়াল ভিউয়ারে পড়ুন' : 'Switch to Google Drive Official Reader'}</span>
                     </button>
                   )}
                 </div>
@@ -596,21 +618,21 @@ export const PdfReaderScreen: React.FC = () => {
         )}
       </main>
 
-      {/* Bottom Floating Control Bar (Hidden in Immersive Fullscreen Mode) */}
-      {!isImmersive && (
-        <footer className="sticky bottom-0 z-40 bg-slate-900/95 backdrop-blur-md text-slate-200 border-t border-slate-800 px-3 sm:px-4 py-2 flex items-center justify-between gap-3 shadow-lg">
+      {/* Bottom Floating Control Bar (Hidden in Immersive Fullscreen Mode or Drive Mode) */}
+      {!isImmersive && viewMode !== 'drive' && (
+        <footer className="sticky bottom-0 z-40 bg-slate-900/95 backdrop-blur-md text-slate-200 border-t border-slate-800 px-3 sm:px-4 py-2 flex items-center justify-between gap-3 shadow-lg w-full max-w-full overflow-hidden">
           {/* Previous Button */}
           <button
             onClick={handlePrevPage}
             disabled={currentPage <= 1}
-            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0"
           >
             <ChevronLeft className="w-4 h-4" />
             <span className="hidden sm:inline">{isBn ? 'পূর্ববর্তী' : 'Previous'}</span>
           </button>
 
           {/* Page Slider & Direct Input */}
-          <div className="flex-1 max-w-md flex items-center gap-2">
+          <div className="flex-1 max-w-md flex items-center gap-2 min-w-0">
             <input
               type="range"
               min={1}
@@ -630,11 +652,40 @@ export const PdfReaderScreen: React.FC = () => {
           <button
             onClick={handleNextPage}
             disabled={currentPage >= totalPages}
-            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0"
           >
             <span className="hidden sm:inline">{isBn ? 'পরবর্তী' : 'Next'}</span>
             <ChevronRight className="w-4 h-4" />
           </button>
+        </footer>
+      )}
+
+      {/* Footer when in Google Drive mode */}
+      {!isImmersive && viewMode === 'drive' && (
+        <footer className="sticky bottom-0 z-40 bg-slate-900/95 backdrop-blur-md text-slate-200 border-t border-slate-800 px-3 sm:px-4 py-1.5 flex items-center justify-between gap-3 shadow-lg w-full max-w-full overflow-hidden text-xs">
+          <div className="flex items-center gap-2 text-slate-400 text-[11px] truncate">
+            <Globe className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+            <span className="truncate">{isBn ? 'গুগল ড্রাইভ ক্লাউড থেকে পেজ স্ক্রোল ও জুম করুন' : 'Scroll and pinch-to-zoom Google Drive pages'}</span>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {pdfSource && (
+              <button
+                onClick={() => setViewMode('pdf')}
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold transition-colors flex items-center gap-1"
+              >
+                <Layers className="w-3 h-3 text-emerald-400" />
+                <span>{isBn ? 'ক্যানভাস মোড' : 'Canvas Mode'}</span>
+              </button>
+            )}
+            <button
+              onClick={toggleFullScreen}
+              className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-semibold transition-colors flex items-center gap-1"
+            >
+              {isFullScreen ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+              <span>{isFullScreen ? (isBn ? 'ফুল স্ক্রিন বন্ধ' : 'Exit Full') : (isBn ? 'ফুল স্ক্রিন' : 'Full Screen')}</span>
+            </button>
+          </div>
         </footer>
       )}
     </div>

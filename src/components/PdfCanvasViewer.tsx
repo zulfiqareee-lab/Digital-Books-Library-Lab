@@ -251,7 +251,7 @@ export const PdfCanvasViewer: React.FC<PdfCanvasViewerProps> = ({
   return (
     <div
       ref={containerRef}
-      className="relative flex flex-col items-center justify-center w-full select-none"
+      className="relative flex flex-col items-center justify-center w-full max-w-full overflow-hidden select-none"
     >
       {/* Loading Overlay */}
       {(isDocumentLoading || isPageRendering) && (
@@ -263,15 +263,15 @@ export const PdfCanvasViewer: React.FC<PdfCanvasViewerProps> = ({
         </div>
       )}
 
-      {/* PDF Page Canvas Card */}
+      {/* PDF Page Canvas Card - Strictly constrained to 100% container width */}
       <div
         style={{
-          width: fitMode === 'width' ? '100%' : `${pageDimensions.width}px`,
-          maxWidth: fitMode === 'width' ? '100%' : `${pageDimensions.width}px`,
+          width: fitMode === 'width' ? '100%' : '100%',
+          maxWidth: fitMode === 'width' ? '100%' : `${Math.min(pageDimensions.width, containerWidth || 800)}px`,
           filter: themeFilter,
           transition: 'filter 0.2s ease'
         }}
-        className="relative shadow-2xl rounded-lg overflow-hidden border border-slate-300/60 dark:border-slate-800 bg-white mx-auto"
+        className="relative shadow-2xl rounded-lg overflow-hidden border border-slate-300/60 dark:border-slate-800 bg-white mx-auto max-w-full"
       >
         <canvas
           ref={canvasRef}

@@ -16,6 +16,8 @@ export interface Book {
   pdfFileName?: string;
   pdfUrl?: string;
   hasPdfDocument?: boolean;
+  driveFileId?: string;
+  isDriveHosted?: boolean;
   isPublished: boolean;
   featured?: boolean;
   publishedYear: number;

@@ -55,6 +55,8 @@ interface DBBook {
   pdfFileName?: string;
   pdfUrl?: string;
   hasPdfDocument?: boolean;
+  driveFileId?: string;
+  isDriveHosted?: boolean;
   isPublished: boolean;
   featured?: boolean;
   publishedYear: number;
@@ -380,11 +382,129 @@ async function startServer() {
     });
   });
 
+  // Google Drive Direct Stream Proxy (handles CORS, range streaming, and high-speed viewing)
+  app.get('/api/drive-stream/:fileId', async (req: Request, res: Response) => {
+    const { fileId } = req.params;
+    if (!fileId || !/^[a-zA-Z0-9_-]{15,100}$/.test(fileId)) {
+      return res.status(400).json({ success: false, message: 'ভুল গুগল ড্রাইভ ফাইল আইডি।' });
+    }
+
+    try {
+      // lh3.googleusercontent.com/d/ direct file export bypasses Google virus confirmation page
+      const directUrl = `https://lh3.googleusercontent.com/d/${fileId}`;
+      const exportUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+
+      const forwardHeaders: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      };
+      if (req.headers.range) {
+        forwardHeaders['Range'] = req.headers.range as string;
+      }
+
+      let driveRes = await fetch(directUrl, { headers: forwardHeaders });
+      let contentType = driveRes.headers.get('content-type') || '';
+
+      if (!driveRes.ok || contentType.includes('text/html')) {
+        driveRes = await fetch(exportUrl, { headers: forwardHeaders });
+        contentType = driveRes.headers.get('content-type') || '';
+      }
+
+      if (!driveRes.ok || contentType.includes('text/html')) {
+        return res.status(403).json({
+          success: false,
+          message: 'গুগল ড্রাইভ ফাইল অ্যাক্সেস করা যায়নি। দয়া করে নিশ্চিত করুন ফাইলের শেয়ারিং অপশন "Anyone with the link can view" (যেকোনো ব্যক্তি যার কাছে লিংক আছে) হিসেবে সেট করা আছে।'
+        });
+      }
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'inline; filename="document.pdf"');
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+
+      const contentLength = driveRes.headers.get('content-length');
+      if (contentLength) res.setHeader('Content-Length', contentLength);
+
+      const contentRange = driveRes.headers.get('content-range');
+      if (contentRange) {
+        res.setHeader('Content-Range', contentRange);
+        res.status(206);
+      }
+
+      if (!driveRes.body) {
+        return res.end();
+      }
+
+      const { Readable } = await import('stream');
+      // @ts-ignore
+      const nodeStream = Readable.fromWeb(driveRes.body);
+      nodeStream.pipe(res);
+    } catch (err: any) {
+      console.error('[Drive Stream Error]:', err);
+      res.status(500).json({ success: false, message: 'গুগল ড্রাইভ স্ট্রিম ব্যর্থ: ' + err.message });
+    }
+  });
+
+  // Verify and test Google Drive link accessibility
+  app.post('/api/admin/verify-drive-link', async (req: Request, res: Response) => {
+    const { driveUrl } = req.body;
+    if (!driveUrl) {
+      return res.status(400).json({ success: false, message: 'গুগল ড্রাইভ লিংক প্রদান করুন।' });
+    }
+
+    const match = String(driveUrl).match(/(?:file\/d\/|open\?id=|id=|\/d\/)([a-zA-Z0-9_-]{20,})/);
+    const fileId = match ? match[1] : (/^[a-zA-Z0-9_-]{25,60}$/.test(String(driveUrl).trim()) ? String(driveUrl).trim() : null);
+
+    if (!fileId) {
+      return res.status(400).json({
+        success: false,
+        message: 'গুগল ড্রাইভ লিংকটি সঠিক নয়। লিংকটি https://drive.google.com/file/d/.../view অথবা শেয়ার লিংকের মতো হতে হবে।'
+      });
+    }
+
+    try {
+      const testUrl = `https://lh3.googleusercontent.com/d/${fileId}`;
+      const checkRes = await fetch(testUrl, {
+        method: 'HEAD',
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+      });
+
+      const contentType = checkRes.headers.get('content-type') || '';
+      const contentLength = Number(checkRes.headers.get('content-length')) || 0;
+      const isPdf = contentType.includes('pdf') || contentType.includes('octet-stream') || checkRes.ok;
+
+      res.json({
+        success: true,
+        fileId,
+        directStreamUrl: `/api/drive-stream/${fileId}`,
+        fileSizeBytes: contentLength,
+        fileSizeFormatted: contentLength > 0 ? `${(contentLength / (1024 * 1024)).toFixed(2)} MB` : 'স্বাভাবিক PDF আকার',
+        isAccessible: checkRes.ok && !contentType.includes('text/html'),
+        message: checkRes.ok
+          ? 'গুগল ড্রাইভ লিংক সফলভাবে যাচাই করা হয়েছে এবং এটি প্রস্তুত।'
+          : 'লিংকটি পাওয়া গেছে তবে নিশ্চিত করুন যে ফাইলটি "Anyone with the link can view" করা হয়েছে।'
+      });
+    } catch (err: any) {
+      res.json({
+        success: true,
+        fileId,
+        directStreamUrl: `/api/drive-stream/${fileId}`,
+        isAccessible: true,
+        message: 'গুগল ড্রাইভ ফাইল আইডি নিষ্কাশন সম্পন্ন।'
+      });
+    }
+  });
+
   // Protected PDF stream for in-app reader
   app.get('/api/books/:id/pdf-view', (req: Request, res: Response) => {
     const book = booksDb.get(req.params.id);
     if (!book) {
       return res.status(404).json({ success: false, message: 'বই পাওয়া যায়নি' });
+    }
+
+    // Google Drive hosted PDF
+    if (book.driveFileId || book.storageIdentifier?.startsWith('drive:')) {
+      const fileId = book.driveFileId || book.storageIdentifier?.replace('drive:', '');
+      return res.redirect(`/api/drive-stream/${fileId}`);
     }
 
     if (book.storageIdentifier) {
@@ -395,6 +515,10 @@ async function startServer() {
         res.setHeader('Accept-Ranges', 'bytes');
         return fs.createReadStream(pdfPath).pipe(res);
       }
+    }
+
+    if (book.pdfUrl && book.pdfUrl.includes('/api/drive-stream/')) {
+      return res.redirect(book.pdfUrl);
     }
 
     return res.status(404).json({ success: false, message: 'পিডিএফ ফাইল পাওয়া যায়নি' });
@@ -488,6 +612,8 @@ async function startServer() {
         descriptionEn,
         totalPages: requestedPages,
         coverUrl: fallbackCoverUrl,
+        driveUrl,
+        driveFileId: requestedDriveFileId,
         isPublished
       } = req.body;
 
@@ -495,16 +621,32 @@ async function startServer() {
         return res.status(400).json({ success: false, message: 'বইয়ের শিরোনাম, লেখক এবং মূল্য আবশ্যক।' });
       }
 
+      // Check if Google Drive link or file ID was provided
+      let resolvedDriveId: string | undefined = requestedDriveFileId;
+      if (!resolvedDriveId && driveUrl) {
+        const match = String(driveUrl).match(/(?:file\/d\/|open\?id=|id=|\/d\/)([a-zA-Z0-9_-]{20,})/);
+        if (match) {
+          resolvedDriveId = match[1];
+        } else if (/^[a-zA-Z0-9_-]{25,60}$/.test(String(driveUrl).trim())) {
+          resolvedDriveId = String(driveUrl).trim();
+        }
+      }
+
+      if (!pdfFile && !resolvedDriveId) {
+        return res.status(400).json({ success: false, message: 'পিডিএফ ফাইল আপলোড করুন অথবা গুগল ড্রাইভ লিংক প্রদান করুন।' });
+      }
+
       const id = `book-${Date.now()}`;
       let totalPages = Number(requestedPages) || 120;
       let fileSizeBytes = pdfFile ? pdfFile.size : 3500000;
-      let storageIdentifier = pdfFile ? pdfFile.filename : undefined;
-      let pdfFileName = pdfFile ? pdfFile.originalname : 'original_document.pdf';
+      let storageIdentifier = resolvedDriveId ? `drive:${resolvedDriveId}` : (pdfFile ? pdfFile.filename : undefined);
+      let pdfFileName = resolvedDriveId ? `${titleBn}.pdf` : (pdfFile ? pdfFile.originalname : 'original_document.pdf');
+      let pdfUrl = resolvedDriveId ? `/api/drive-stream/${resolvedDriveId}` : (storageIdentifier ? `/uploads/pdfs/${storageIdentifier}` : undefined);
       let samplePages: DBBook['samplePages'] = [
         {
           pageNumber: 1,
           titleBn: 'প্রথম অধ্যায়',
-          contentBn: `নমুনা পাঠ পৃষ্ঠা: "${titleBn}" গ্রন্থটি ডিজিটাল বুক লাইব্রেরির মাধ্যমে বিনামূল্যে পড়ার জন্য উন্মুক্ত রয়েছে।`
+          contentBn: `নমুনা পাঠ পৃষ্ঠা: "${titleBn}" গ্রন্থটি ডিজিটাল বুক লাইব্রেরির মাধ্যমে বিনামূল্যে পড়ার জন্য উন্মুক্ত রয়েছে।\n\n${descriptionBn || ''}`
         }
       ];
 
@@ -534,8 +676,10 @@ async function startServer() {
         fileSizeBytes,
         storageIdentifier,
         pdfFileName,
-        pdfUrl: storageIdentifier ? `/uploads/pdfs/${storageIdentifier}` : undefined,
-        hasPdfDocument: Boolean(storageIdentifier),
+        pdfUrl,
+        hasPdfDocument: Boolean(storageIdentifier || pdfUrl),
+        driveFileId: resolvedDriveId,
+        isDriveHosted: Boolean(resolvedDriveId),
         isPublished: String(isPublished) === 'true',
         publishedYear: new Date().getFullYear(),
         samplePages,

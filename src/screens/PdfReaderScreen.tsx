@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLibrary } from '../context/LibraryContext';
 import { fetchProtectedPage, getBookPdfSource } from '../services/api';
-import { PdfCanvasViewer } from '../components/PdfCanvasViewer';
+import { PdfCanvasViewer, FitMode } from '../components/PdfCanvasViewer';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -18,7 +18,10 @@ import {
   ShieldCheck,
   FileText,
   Layers,
-  Sparkles
+  StretchHorizontal,
+  Maximize,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 
 export const PdfReaderScreen: React.FC = () => {
@@ -30,7 +33,9 @@ export const PdfReaderScreen: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<number>(readerPage || 1);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
   const [readerTheme, setReaderTheme] = useState<'light' | 'sepia' | 'dark'>('sepia');
+  const [fitMode, setFitMode] = useState<FitMode>('width');
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [isImmersive, setIsImmersive] = useState(false);
   const [pageData, setPageData] = useState<any>(null);
   const [isLoadingPage, setIsLoadingPage] = useState(false);
   const [showToc, setShowToc] = useState(false);
@@ -43,6 +48,19 @@ export const PdfReaderScreen: React.FC = () => {
 
   const totalPages = totalPdfPages || book?.totalPages || 100;
   const isOwned = book ? hasEntitlement(book.id) : false;
+
+  // Track browser fullscreen changes
+  useEffect(() => {
+    const handleFsChange = () => {
+      const isFs = Boolean(document.fullscreenElement);
+      setIsFullScreen(isFs);
+      if (!isFs) {
+        setIsImmersive(false);
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, []);
 
   // 1. Fetch real PDF source (IndexedDB local blob or remote server URL)
   useEffect(() => {
@@ -94,6 +112,53 @@ export const PdfReaderScreen: React.FC = () => {
     };
   }, [book, currentPage, viewMode]);
 
+  const handleNextPage = () => {
+    if (currentPage < totalPages) setCurrentPage(p => p + 1);
+  };
+
+  const handlePrevPage = () => {
+    if (currentPage > 1) setCurrentPage(p => p - 1);
+  };
+
+  const toggleFullScreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        if (document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+        }
+        setIsFullScreen(true);
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        }
+        setIsFullScreen(false);
+        setIsImmersive(false);
+      }
+    } catch (e) {
+      // In restricted webviews, fallback to CSS pseudo-fullscreen
+      setIsFullScreen(prev => !prev);
+    }
+  };
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.key === 'ArrowRight' || e.key === 'PageDown') {
+        handleNextPage();
+      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        handlePrevPage();
+      } else if (e.key === 'f' || e.key === 'F') {
+        toggleFullScreen();
+      } else if (e.key === 'Escape' && isImmersive) {
+        setIsImmersive(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentPage, totalPages, isImmersive]);
+
   if (!book) {
     return (
       <div className="p-12 text-center">
@@ -107,24 +172,6 @@ export const PdfReaderScreen: React.FC = () => {
       </div>
     );
   }
-
-  const handleNextPage = () => {
-    if (currentPage < totalPages) setCurrentPage(p => p + 1);
-  };
-
-  const handlePrevPage = () => {
-    if (currentPage > 1) setCurrentPage(p => p - 1);
-  };
-
-  const toggleFullScreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-      setIsFullScreen(true);
-    } else {
-      if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
-      setIsFullScreen(false);
-    }
-  };
 
   // Color schemes for reading canvas
   const themeStyles = {
@@ -140,172 +187,269 @@ export const PdfReaderScreen: React.FC = () => {
   };
 
   return (
-    <div className={`min-h-screen flex flex-col ${canvasBackground[readerTheme]} select-none relative transition-colors duration-200`}>
-      {/* Top Reader Navigation Bar */}
-      <header className="sticky top-0 z-40 bg-slate-900 text-white px-3 sm:px-6 py-2.5 flex items-center justify-between gap-3 shadow-md">
-        {/* Left: Back & Title */}
-        <div className="flex items-center gap-3 min-w-0">
-          <button
-            onClick={() => navigateTo('book_detail', { book })}
-            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
-            title={isBn ? 'বইয়ের বিবরণে ফিরুন' : 'Back to book details'}
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div className="min-w-0">
-            <h1 className="text-xs sm:text-sm font-bold truncate text-white leading-tight">
-              {isBn ? book.titleBn : book.titleEn}
-            </h1>
-            <p className="text-[10px] text-emerald-400 font-medium truncate flex items-center gap-1.5">
-              <span>{book.authorBn}</span>
-              <span>•</span>
-              <span>{isBn ? 'সুরক্ষিত উন্মুক্ত পাঠকক্ষ' : 'Protected Free Reader'}</span>
-            </p>
+    <div className={`min-h-screen flex flex-col ${canvasBackground[readerTheme]} select-none relative transition-colors duration-200 ${isFullScreen ? 'h-screen overflow-hidden' : ''}`}>
+      {/* Top Reader Navigation Bar (hidden in Immersive Mode) */}
+      {!isImmersive && (
+        <header className="sticky top-0 z-40 bg-slate-900 text-white px-3 sm:px-6 py-2 flex items-center justify-between gap-2 sm:gap-3 shadow-md">
+          {/* Left: Back & Title */}
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <button
+              onClick={() => {
+                if (isFullScreen && document.exitFullscreen) {
+                  document.exitFullscreen().catch(() => {});
+                }
+                navigateTo('book_detail', { book });
+              }}
+              className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
+              title={isBn ? 'বইয়ের বিবরণে ফিরুন' : 'Back to book details'}
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div className="min-w-0">
+              <h1 className="text-xs sm:text-sm font-bold truncate text-white leading-tight">
+                {isBn ? book.titleBn : book.titleEn}
+              </h1>
+              <p className="text-[10px] text-emerald-400 font-medium truncate flex items-center gap-1.5">
+                <span>{book.authorBn}</span>
+                <span>•</span>
+                <span>{isBn ? 'সুরক্ষিত উন্মুক্ত পাঠকক্ষ' : 'Protected Free Reader'}</span>
+              </p>
+            </div>
           </div>
-        </div>
 
-        {/* Center: Page Controls */}
-        <div className="hidden sm:flex items-center gap-2 bg-slate-800 px-3 py-1 rounded-xl border border-slate-700 text-xs">
-          <button
-            onClick={handlePrevPage}
-            disabled={currentPage <= 1}
-            className="p-1 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <span className="font-mono tabular-nums text-slate-200 font-semibold px-1">
+          {/* Center: Page Controls */}
+          <div className="hidden md:flex items-center gap-2 bg-slate-800 px-3 py-1 rounded-xl border border-slate-700 text-xs">
+            <button
+              onClick={handlePrevPage}
+              disabled={currentPage <= 1}
+              className="p-1 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span className="font-mono tabular-nums text-slate-200 font-semibold px-1">
+              {currentPage} / {totalPages}
+            </span>
+            <button
+              onClick={handleNextPage}
+              disabled={currentPage >= totalPages}
+              className="p-1 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Right: Controls & Screen Modes */}
+          <div className="flex items-center gap-1 sm:gap-2">
+            {/* Fit Width / Fit Page Mode Toggle */}
+            {viewMode === 'pdf' && (
+              <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+                <button
+                  onClick={() => setFitMode('width')}
+                  className={`px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
+                    fitMode === 'width' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title={isBn ? 'স্ক্রিন ফিট (চওড়া ভিউ)' : 'Fit to Screen Width'}
+                >
+                  <StretchHorizontal className="w-3.5 h-3.5" />
+                  <span className="hidden lg:inline">{isBn ? 'স্ক্রিন ফিট' : 'Fit Width'}</span>
+                </button>
+                <button
+                  onClick={() => setFitMode('page')}
+                  className={`px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
+                    fitMode === 'page' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title={isBn ? 'সম্পূর্ণ পৃষ্ঠা' : 'Fit Whole Page'}
+                >
+                  <Maximize className="w-3.5 h-3.5" />
+                  <span className="hidden lg:inline">{isBn ? 'সম্পূর্ণ পৃষ্ঠা' : 'Fit Page'}</span>
+                </button>
+              </div>
+            )}
+
+            {/* Mode Switcher: PDF Page Canvas vs Text View */}
+            {pdfSource && (
+              <div className="hidden sm:flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+                <button
+                  onClick={() => setViewMode('pdf')}
+                  className={`px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
+                    viewMode === 'pdf' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title={isBn ? 'পিডিএফ পাতা' : 'PDF Pages'}
+                >
+                  <Layers className="w-3 h-3" />
+                  <span className="hidden md:inline">{isBn ? 'পিডিএফ' : 'PDF'}</span>
+                </button>
+                <button
+                  onClick={() => setViewMode('text')}
+                  className={`px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
+                    viewMode === 'text' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title={isBn ? 'টেক্সট মোড' : 'Text'}
+                >
+                  <FileText className="w-3 h-3" />
+                  <span className="hidden md:inline">{isBn ? 'টেক্সট' : 'Text'}</span>
+                </button>
+              </div>
+            )}
+
+            {/* Table of contents toggle */}
+            <button
+              onClick={() => setShowToc(!showToc)}
+              className={`p-1.5 sm:p-2 rounded-lg transition-colors ${
+                showToc ? 'bg-emerald-600 text-white' : 'hover:bg-slate-800 text-slate-300'
+              }`}
+              title={isBn ? 'সূচিপত্র' : 'Table of Contents'}
+            >
+              <List className="w-4 h-4" />
+            </button>
+
+            {/* Theme switcher */}
+            <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+              <button
+                onClick={() => setReaderTheme('light')}
+                className={`p-1.5 rounded text-xs ${
+                  readerTheme === 'light' ? 'bg-slate-700 text-amber-300' : 'text-slate-400 hover:text-white'
+                }`}
+                title="Light"
+              >
+                <Sun className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => setReaderTheme('sepia')}
+                className={`px-1.5 py-1 rounded text-[10px] font-bold ${
+                  readerTheme === 'sepia' ? 'bg-amber-100 text-amber-900' : 'text-slate-400 hover:text-white'
+                }`}
+                title="Sepia"
+              >
+                সেপিয়া
+              </button>
+              <button
+                onClick={() => setReaderTheme('dark')}
+                className={`p-1.5 rounded text-xs ${
+                  readerTheme === 'dark' ? 'bg-slate-700 text-sky-400' : 'text-slate-400 hover:text-white'
+                }`}
+                title="Dark"
+              >
+                <Moon className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Zoom controls */}
+            <div className="hidden sm:flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+              <button
+                onClick={() => {
+                  setFitMode('free');
+                  setZoomLevel(z => Math.max(70, z - 15));
+                }}
+                className="p-1.5 text-slate-400 hover:text-white"
+                title="Zoom Out"
+              >
+                <ZoomOut className="w-3.5 h-3.5" />
+              </button>
+              <span className="text-[11px] font-mono px-1 text-slate-300 hidden md:inline">{zoomLevel}%</span>
+              <button
+                onClick={() => {
+                  setFitMode('free');
+                  setZoomLevel(z => Math.min(220, z + 15));
+                }}
+                className="p-1.5 text-slate-400 hover:text-white"
+                title="Zoom In"
+              >
+                <ZoomIn className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Full Screen Toggle (Always visible on mobile & desktop) */}
+            <button
+              onClick={toggleFullScreen}
+              className={`p-1.5 sm:p-2 rounded-lg transition-colors ${
+                isFullScreen ? 'bg-emerald-600 text-white' : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+              }`}
+              title={isFullScreen ? (isBn ? 'ফুল স্ক্রিন বন্ধ করুন' : 'Exit Full Screen') : (isBn ? 'ফুল স্ক্রিন মোড' : 'Full Screen')}
+            >
+              {isFullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+
+            {/* Immersive Distraction-Free Toggle in Fullscreen */}
+            {isFullScreen && (
+              <button
+                onClick={() => setIsImmersive(true)}
+                className="p-1.5 sm:p-2 rounded-lg hover:bg-slate-800 text-emerald-400 hover:text-emerald-300 transition-colors"
+                title={isBn ? 'সম্পূর্ণ পাতা পড়ার মোড (টুলবার লুকান)' : 'Distraction-free reading'}
+              >
+                <EyeOff className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Download Original PDF Button */}
+            {isOwned ? (
+              <button
+                onClick={() => navigateTo('payment_result', { book })}
+                className="px-2.5 sm:px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white text-xs font-semibold flex items-center gap-1 shadow-sm transition-colors whitespace-nowrap"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{isBn ? 'ডাউনলোড' : 'Download'}</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => navigateTo('bkash_checkout', { book })}
+                className="px-2.5 sm:px-3 py-1.5 rounded-lg bg-pink-700 hover:bg-pink-600 text-white text-xs font-bold flex items-center gap-1 shadow-sm transition-colors whitespace-nowrap"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{isBn ? `বিকাশ ৳${book.priceBdt}` : `bKash`}</span>
+              </button>
+            )}
+          </div>
+        </header>
+      )}
+
+      {/* Immersive Floating Bar (shown when header/footer are hidden in Fullscreen) */}
+      {isImmersive && (
+        <div className="fixed top-3 right-3 z-50 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md text-white px-3 py-1.5 rounded-full border border-slate-700 shadow-2xl animate-fade-in">
+          <span className="text-xs font-mono font-bold text-emerald-400 mr-1">
             {currentPage} / {totalPages}
           </span>
           <button
+            onClick={handlePrevPage}
+            disabled={currentPage <= 1}
+            className="p-1 hover:bg-slate-800 rounded disabled:opacity-30"
+            title="Previous"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <button
             onClick={handleNextPage}
             disabled={currentPage >= totalPages}
-            className="p-1 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+            className="p-1 hover:bg-slate-800 rounded disabled:opacity-30"
+            title="Next"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
-        </div>
-
-        {/* Right: Controls & Purchase CTA */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Mode Switcher: PDF Page Canvas vs Text View */}
-          {pdfSource && (
-            <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
-              <button
-                onClick={() => setViewMode('pdf')}
-                className={`px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
-                  viewMode === 'pdf' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
-                }`}
-                title={isBn ? 'পিডিএফ পেজ ভিউ' : 'PDF Page View'}
-              >
-                <Layers className="w-3 h-3" />
-                <span className="hidden md:inline">{isBn ? 'পিডিএফ পাতা' : 'PDF Pages'}</span>
-              </button>
-              <button
-                onClick={() => setViewMode('text')}
-                className={`px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
-                  viewMode === 'text' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
-                }`}
-                title={isBn ? 'টেক্সট ভিউ' : 'Text View'}
-              >
-                <FileText className="w-3 h-3" />
-                <span className="hidden md:inline">{isBn ? 'টেক্সট মোড' : 'Text'}</span>
-              </button>
-            </div>
-          )}
-
-          {/* Table of contents toggle */}
+          <div className="w-[1px] h-3.5 bg-slate-700 mx-1" />
           <button
-            onClick={() => setShowToc(!showToc)}
-            className={`p-2 rounded-lg transition-colors ${
-              showToc ? 'bg-emerald-600 text-white' : 'hover:bg-slate-800 text-slate-300'
-            }`}
-            title={isBn ? 'সূচিপত্র' : 'Table of Contents'}
+            onClick={() => setFitMode(f => f === 'width' ? 'page' : 'width')}
+            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white"
+            title={fitMode === 'width' ? 'Fit Page' : 'Fit Width'}
           >
-            <List className="w-4 h-4" />
+            {fitMode === 'width' ? <Maximize className="w-3.5 h-3.5" /> : <StretchHorizontal className="w-3.5 h-3.5" />}
           </button>
-
-          {/* Theme switcher */}
-          <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
-            <button
-              onClick={() => setReaderTheme('light')}
-              className={`p-1.5 rounded text-xs ${
-                readerTheme === 'light' ? 'bg-slate-700 text-amber-300' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Light"
-            >
-              <Sun className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setReaderTheme('sepia')}
-              className={`px-1.5 py-1 rounded text-[10px] font-bold ${
-                readerTheme === 'sepia' ? 'bg-amber-100 text-amber-900' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Sepia"
-            >
-              সেপিয়া
-            </button>
-            <button
-              onClick={() => setReaderTheme('dark')}
-              className={`p-1.5 rounded text-xs ${
-                readerTheme === 'dark' ? 'bg-slate-700 text-sky-400' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Dark"
-            >
-              <Moon className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {/* Zoom controls */}
-          <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
-            <button
-              onClick={() => setZoomLevel(z => Math.max(70, z - 15))}
-              className="p-1.5 text-slate-400 hover:text-white"
-              title="Zoom Out"
-            >
-              <ZoomOut className="w-3.5 h-3.5" />
-            </button>
-            <span className="text-[11px] font-mono px-1 text-slate-300 hidden sm:inline">{zoomLevel}%</span>
-            <button
-              onClick={() => setZoomLevel(z => Math.min(180, z + 15))}
-              className="p-1.5 text-slate-400 hover:text-white"
-              title="Zoom In"
-            >
-              <ZoomIn className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {/* Full Screen */}
           <button
-            onClick={toggleFullScreen}
-            className="p-2 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white transition-colors hidden sm:block"
-            title={isFullScreen ? 'Exit Full Screen' : 'Full Screen'}
+            onClick={() => setIsImmersive(false)}
+            className="p-1 hover:bg-slate-800 rounded text-emerald-400 hover:text-white ml-1 flex items-center gap-1 text-[11px] font-medium"
+            title="Show Controls"
           >
-            {isFullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            <Eye className="w-3.5 h-3.5" />
+            <span>টুলবার</span>
           </button>
-
-          {/* Download Original PDF Button */}
-          {isOwned ? (
-            <button
-              onClick={() => navigateTo('payment_result', { book })}
-              className="px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors whitespace-nowrap"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{isBn ? 'ডাউনলোড' : 'Download'}</span>
-            </button>
-          ) : (
-            <button
-              onClick={() => navigateTo('bkash_checkout', { book })}
-              className="px-3 py-1.5 rounded-lg bg-pink-700 hover:bg-pink-600 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors whitespace-nowrap"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>{isBn ? `বিকাশ (৳${book.priceBdt})` : `bKash`}</span>
-            </button>
-          )}
         </div>
-      </header>
+      )}
 
-      {/* Main Reading Canvas */}
-      <main className="flex-1 overflow-auto p-3 sm:p-6 flex flex-col items-center justify-start relative">
+      {/* Main Reading Canvas (Unconstrained width so PDF expands to 100% of the screen) */}
+      <main
+        className={`flex-1 overflow-auto flex flex-col items-center justify-start relative transition-all duration-150 ${
+          isFullScreen ? 'p-0 sm:p-2' : 'p-2 sm:p-5'
+        }`}
+      >
         {/* Table of Contents Drawer */}
         {showToc && (
           <aside className="absolute top-4 left-4 z-30 w-72 max-w-[85vw] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-3">
@@ -350,11 +494,21 @@ export const PdfReaderScreen: React.FC = () => {
 
         {/* View Content: PDF Canvas or Structured Text Fallback */}
         {viewMode === 'pdf' && pdfSource ? (
-          <div className="w-full max-w-4xl flex flex-col items-center">
+          <div
+            className={`w-full flex flex-col items-center transition-all ${
+              isFullScreen
+                ? 'max-w-none px-0'
+                : fitMode === 'width'
+                ? 'max-w-5xl px-0 sm:px-2'
+                : 'max-w-3xl px-2'
+            }`}
+          >
             <PdfCanvasViewer
               source={pdfSource}
               currentPage={currentPage}
               zoomLevel={zoomLevel}
+              fitMode={fitMode}
+              isFullScreen={isFullScreen}
               readerTheme={readerTheme}
               watermarkText={`Digital Book Library • Read-Only Online • ${book.titleBn}`}
               onTotalPagesLoaded={(pages) => setTotalPdfPages(pages)}
@@ -368,7 +522,7 @@ export const PdfReaderScreen: React.FC = () => {
           /* Server-Rendered / Local Protected Text Reading Page */
           <div
             style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'top center' }}
-            className={`relative w-full max-w-2xl min-h-[640px] p-8 sm:p-14 rounded-2xl border shadow-xl transition-all duration-150 flex flex-col justify-between ${themeStyles[readerTheme]}`}
+            className={`relative w-full max-w-2xl min-h-[640px] p-8 sm:p-14 rounded-2xl border shadow-xl transition-all duration-150 flex flex-col justify-between my-2 ${themeStyles[readerTheme]}`}
           >
             {/* Subtle Anti-Copy Security Watermark Stamp */}
             <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center opacity-[0.035] overflow-hidden rotate-[-25deg]">
@@ -380,7 +534,7 @@ export const PdfReaderScreen: React.FC = () => {
               </p>
             </div>
 
-            {/* Page Header Header */}
+            {/* Page Header */}
             <div className="border-b pb-3 mb-6 flex items-center justify-between text-xs opacity-60">
               <span className="font-medium italic">{book.titleBn}</span>
               <span>{isBn ? 'পৃষ্ঠা' : 'Page'} {currentPage}</span>
@@ -442,45 +596,47 @@ export const PdfReaderScreen: React.FC = () => {
         )}
       </main>
 
-      {/* Bottom Floating Control Bar */}
-      <footer className="sticky bottom-0 z-40 bg-slate-900/95 backdrop-blur-md text-slate-200 border-t border-slate-800 px-4 py-2.5 flex items-center justify-between gap-4">
-        {/* Previous Button */}
-        <button
-          onClick={handlePrevPage}
-          disabled={currentPage <= 1}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          <span>{isBn ? 'পূর্ববর্তী পৃষ্ঠা' : 'Previous'}</span>
-        </button>
+      {/* Bottom Floating Control Bar (Hidden in Immersive Fullscreen Mode) */}
+      {!isImmersive && (
+        <footer className="sticky bottom-0 z-40 bg-slate-900/95 backdrop-blur-md text-slate-200 border-t border-slate-800 px-3 sm:px-4 py-2 flex items-center justify-between gap-3 shadow-lg">
+          {/* Previous Button */}
+          <button
+            onClick={handlePrevPage}
+            disabled={currentPage <= 1}
+            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            <span className="hidden sm:inline">{isBn ? 'পূর্ববর্তী' : 'Previous'}</span>
+          </button>
 
-        {/* Page Slider & Direct Input */}
-        <div className="flex-1 max-w-sm flex items-center gap-2">
-          <input
-            type="range"
-            min={1}
-            max={totalPages}
-            value={currentPage}
-            onChange={e => setCurrentPage(parseInt(e.target.value, 10))}
-            className="w-full accent-emerald-500 cursor-pointer h-1.5 bg-slate-700 rounded-lg"
-          />
-          <div className="flex items-center gap-1 text-xs font-mono font-bold text-slate-200 shrink-0 bg-slate-800 px-2 py-1 rounded-lg border border-slate-700">
-            <span>{currentPage}</span>
-            <span className="text-slate-500">/</span>
-            <span>{totalPages}</span>
+          {/* Page Slider & Direct Input */}
+          <div className="flex-1 max-w-md flex items-center gap-2">
+            <input
+              type="range"
+              min={1}
+              max={totalPages}
+              value={currentPage}
+              onChange={e => setCurrentPage(parseInt(e.target.value, 10))}
+              className="w-full accent-emerald-500 cursor-pointer h-1.5 bg-slate-700 rounded-lg"
+            />
+            <div className="flex items-center gap-1 text-xs font-mono font-bold text-slate-200 shrink-0 bg-slate-800 px-2 py-1 rounded-lg border border-slate-700">
+              <span>{currentPage}</span>
+              <span className="text-slate-500">/</span>
+              <span>{totalPages}</span>
+            </div>
           </div>
-        </div>
 
-        {/* Next Button */}
-        <button
-          onClick={handleNextPage}
-          disabled={currentPage >= totalPages}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-        >
-          <span>{isBn ? 'পরবর্তী পৃষ্ঠা' : 'Next'}</span>
-          <ChevronRight className="w-4 h-4" />
-        </button>
-      </footer>
+          {/* Next Button */}
+          <button
+            onClick={handleNextPage}
+            disabled={currentPage >= totalPages}
+            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            <span className="hidden sm:inline">{isBn ? 'পরবর্তী' : 'Next'}</span>
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </footer>
+      )}
     </div>
   );
 };

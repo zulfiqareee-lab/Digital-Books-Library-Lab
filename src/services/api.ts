@@ -213,6 +213,10 @@ export async function createLocalBookFromFormData(formData: FormData, adminEmail
 
   const pdfFile = formData.get('pdfFile') as File | null;
   const coverFile = formData.get('coverFile') as File | null;
+  const driveUrl = formData.get('driveUrl') as string | null;
+  const driveFileIdRaw = formData.get('driveFileId') as string | null;
+  let resolvedDriveId = driveFileIdRaw || (driveUrl ? extractGoogleDriveId(driveUrl) : null);
+
   let coverUrl = (formData.get('coverUrl') as string) || '/src/assets/images/book_cover_novel_1792737262147.jpg';
 
   if (coverFile) {
@@ -224,15 +228,17 @@ export async function createLocalBookFromFormData(formData: FormData, adminEmail
   }
 
   const id = `book-local-${Date.now()}`;
-  const totalPages = 85;
+  const totalPages = Number(formData.get('totalPages')) || 85;
   const fileSizeBytes = pdfFile ? pdfFile.size : 3200000;
-  const pdfFileName = pdfFile ? pdfFile.name : 'original_document.pdf';
+  const pdfFileName = resolvedDriveId ? `${titleBn}.pdf` : (pdfFile ? pdfFile.name : 'original_document.pdf');
+  const storageIdentifier = resolvedDriveId ? `drive:${resolvedDriveId}` : undefined;
+  const pdfUrl = resolvedDriveId ? `/api/drive-stream/${resolvedDriveId}` : `/api/books/${id}/pdf-view`;
 
   const samplePages = [
     {
       pageNumber: 1,
       titleBn: 'অধ্যায় ১ - সূচনা ও উপক্রমণিকা',
-      contentBn: `নমুনা পাঠ পৃষ্ঠা: "${titleBn}" গ্রন্থটি ডিজিটাল বুক লাইব্রেরির মাধ্যমে আপলোড করা হয়েছে।\n\nলেখক: ${authorBn}\nক্যাটাগরি: ${category}\nমূল্য: ৳${priceBdt}\n\nবইটির আসল PDF ফাইল (${pdfFileName}) নিরাপদে সংরক্ষিত আছে। পাঠকরা অনলাইনে বিনামূল্যে পড়তে পারবেন এবং বিকাশ পেমেন্টের মাধ্যমে সম্পূর্ণ পিডিএফ ডাউনলোড করতে পারবেন।`
+      contentBn: `নমুনা পাঠ পৃষ্ঠা: "${titleBn}" গ্রন্থটি ডিজিটাল বুক লাইব্রেরির মাধ্যমে সংরক্ষিত হয়েছে।\n\nলেখক: ${authorBn}\nক্যাটাগরি: ${category}\nমূল্য: ৳${priceBdt}\n\nবইটির আসল PDF ফাইল (${pdfFileName}) নিরাপদে সংরক্ষিত আছে। পাঠকরা অনলাইনে সম্পূর্ণ স্ক্রিনে বিনামূল্যে পড়তে পারবেন এবং বিকাশ পেমেন্টের মাধ্যমে সম্পূর্ণ পিডিএফ ডাউনলোড করতে পারবেন।`
     },
     {
       pageNumber: 2,
@@ -263,9 +269,12 @@ export async function createLocalBookFromFormData(formData: FormData, adminEmail
     descriptionEn,
     totalPages,
     fileSizeBytes,
+    storageIdentifier,
     pdfFileName,
-    pdfUrl: `/api/books/${id}/pdf-view`,
-    hasPdfDocument: Boolean(pdfFile),
+    pdfUrl,
+    hasPdfDocument: Boolean(pdfFile || resolvedDriveId),
+    driveFileId: resolvedDriveId || undefined,
+    isDriveHosted: Boolean(resolvedDriveId),
     isPublished,
     publishedYear: new Date().getFullYear(),
     publisherBn: 'ডিজিটাল বুক লাইব্রেরি (বাংলাদেশ)',
@@ -447,6 +456,52 @@ export async function adminDeleteBook(id: string, adminEmail: string) {
   }
 }
 
+// Google Drive Helpers
+export function extractGoogleDriveId(input: string): string | null {
+  if (!input) return null;
+  const trimmed = input.trim();
+  const match = trimmed.match(/(?:file\/d\/|open\?id=|id=|\/d\/)([a-zA-Z0-9_-]{20,})/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  if (/^[a-zA-Z0-9_-]{25,60}$/.test(trimmed)) {
+    return trimmed;
+  }
+  return null;
+}
+
+export async function verifyGoogleDriveLink(driveUrl: string) {
+  try {
+    const res = await fetch(`${getBaseUrl()}/api/admin/verify-drive-link`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ driveUrl })
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch {}
+
+  const fileId = extractGoogleDriveId(driveUrl);
+  if (fileId) {
+    return {
+      success: true,
+      fileId,
+      directStreamUrl: `/api/drive-stream/${fileId}`,
+      fileSizeFormatted: 'গুগল ড্রাইভ স্টোরেজ',
+      isAccessible: true,
+      message: 'গুগল ড্রাইভ ফাইল আইডি সনাক্ত হয়েছে।'
+    };
+  }
+
+  return {
+    success: false,
+    message: 'ভুল গুগল ড্রাইভ লিংক। অনুগ্রহ করে ভ্যালিড শেয়ার লিংক দিন।'
+  };
+}
+
 export async function getBookPdfSource(book: Book): Promise<string | Blob | ArrayBuffer | null> {
   // 1. Check offline IndexedDB first
   try {
@@ -458,7 +513,16 @@ export async function getBookPdfSource(book: Book): Promise<string | Blob | Arra
     console.warn('IndexedDB read error:', err);
   }
 
-  // 2. Check if book has server URL or storage identifier
+  // 2. Check if book is hosted on Google Drive
+  if (book.driveFileId) {
+    return `${getBaseUrl()}/api/drive-stream/${book.driveFileId}`;
+  }
+  if (book.storageIdentifier?.startsWith('drive:')) {
+    const fileId = book.storageIdentifier.replace('drive:', '');
+    return `${getBaseUrl()}/api/drive-stream/${fileId}`;
+  }
+
+  // 3. Check if book has server URL or local storage identifier
   if (book.storageIdentifier) {
     return `${getBaseUrl()}/uploads/pdfs/${book.storageIdentifier}`;
   }
@@ -467,7 +531,7 @@ export async function getBookPdfSource(book: Book): Promise<string | Blob | Arra
     return url;
   }
 
-  // 3. Fallback to API stream endpoint
+  // 4. Fallback to API stream endpoint
   if (book.hasPdfDocument) {
     return `${getBaseUrl()}/api/books/${book.id}/pdf-view`;
   }

@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLibrary } from '../context/LibraryContext';
-import { adminUploadBookWithPdf, adminPreviewPdf } from '../services/api';
+import { adminUploadBookWithPdf, adminPreviewPdf, verifyGoogleDriveLink, extractGoogleDriveId } from '../services/api';
 import { CATEGORIES } from '../data/initialBooks';
 import { PdfCanvasViewer } from '../components/PdfCanvasViewer';
 import {
@@ -16,7 +16,13 @@ import {
   Send,
   X,
   BookOpen,
-  HelpCircle
+  HelpCircle,
+  HardDrive,
+  Globe,
+  Link2,
+  Check,
+  ExternalLink,
+  Info
 } from 'lucide-react';
 
 export const UploadBookScreen: React.FC = () => {
@@ -35,10 +41,23 @@ export const UploadBookScreen: React.FC = () => {
   const [bookLanguage, setBookLanguage] = useState<'bn' | 'en'>('bn');
   const [priceBdt, setPriceBdt] = useState<number>(120);
 
-  // File States
+  // Storage Option: Local File Upload vs Google Drive Cloud Link
+  const [pdfSourceType, setPdfSourceType] = useState<'upload' | 'drive'>('upload');
+
+  // Local File States
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [coverPreviewUrl, setCoverPreviewUrl] = useState<string>('/src/assets/images/book_cover_novel_1792737262147.jpg');
+
+  // Google Drive Link States
+  const [driveUrl, setDriveUrl] = useState('');
+  const [driveFileId, setDriveFileId] = useState<string | null>(null);
+  const [isVerifyingDrive, setIsVerifyingDrive] = useState(false);
+  const [driveVerificationStatus, setDriveVerificationStatus] = useState<{
+    verified: boolean;
+    message: string;
+    sizeFormatted?: string;
+  } | null>(null);
 
   // UI / Progress States
   const [uploadProgress, setUploadProgress] = useState<number>(0);
@@ -115,24 +134,83 @@ export const UploadBookScreen: React.FC = () => {
     setCoverPreviewUrl(objectUrl);
   };
 
-  // PDF Preview Handler
-  const handlePdfPreview = async () => {
-    if (!pdfFile) {
-      setErrorMessage(isBn ? 'প্রিভিউ দেখতে প্রথমে একটি PDF ফাইল নির্বাচন করুন।' : 'Please select a PDF file first.');
+  // Handle Google Drive Link Verification
+  const handleVerifyDriveLink = async () => {
+    if (!driveUrl.trim()) {
+      setErrorMessage(isBn ? 'অনুগ্রহ করে গুগল ড্রাইভ শেয়ার লিংক প্রদান করুন।' : 'Please enter a Google Drive share link.');
       return;
     }
 
-    setIsPreviewLoading(true);
+    setIsVerifyingDrive(true);
     setErrorMessage(null);
+    setDriveVerificationStatus(null);
 
     try {
-      const data = await adminPreviewPdf(pdfFile);
-      setPreviewData(data);
-      setShowPreviewModal(true);
+      const res = await verifyGoogleDriveLink(driveUrl);
+      if (res.success && res.fileId) {
+        setDriveFileId(res.fileId);
+        setDriveVerificationStatus({
+          verified: true,
+          message: isBn
+            ? 'গুগল ড্রাইভ লিংক সফলভাবে যাচাই করা হয়েছে! এটি সরাসরি ইন-অ্যাপ স্ট্রিমিংয়ের জন্য প্রস্তুত।'
+            : 'Google Drive link verified successfully! Ready for high-speed streaming.',
+          sizeFormatted: res.fileSizeFormatted
+        });
+      } else {
+        setDriveVerificationStatus({
+          verified: false,
+          message: res.message || (isBn ? 'লিংক যাচাই করা যায়নি।' : 'Could not verify link.')
+        });
+        setErrorMessage(res.message);
+      }
     } catch (err: any) {
-      setErrorMessage(err.message || 'পিডিএফ প্রিভিউ লোড করতে ব্যর্থ হয়েছে।');
+      setErrorMessage(err.message || 'ড্রাইভ যাচাইয়ে সমস্যা হয়েছে।');
     } finally {
-      setIsPreviewLoading(false);
+      setIsVerifyingDrive(false);
+    }
+  };
+
+  // PDF Preview Handler (Local file or Google Drive stream)
+  const handlePdfPreview = async () => {
+    if (pdfSourceType === 'upload') {
+      if (!pdfFile) {
+        setErrorMessage(isBn ? 'প্রিভিউ দেখতে প্রথমে একটি PDF ফাইল নির্বাচন করুন।' : 'Please select a PDF file first.');
+        return;
+      }
+
+      setIsPreviewLoading(true);
+      setErrorMessage(null);
+
+      try {
+        const data = await adminPreviewPdf(pdfFile);
+        setPreviewData(data);
+        setShowPreviewModal(true);
+      } catch (err: any) {
+        setErrorMessage(err.message || 'পিডিএফ প্রিভিউ লোড করতে ব্যর্থ হয়েছে।');
+      } finally {
+        setIsPreviewLoading(false);
+      }
+    } else {
+      // Google Drive Preview
+      const extractedId = driveFileId || extractGoogleDriveId(driveUrl);
+      if (!extractedId) {
+        setErrorMessage(isBn ? 'প্রিভিউ দেখতে সঠিক গুগল ড্রাইভ শেয়ার লিংক দিন।' : 'Enter a valid Drive link first.');
+        return;
+      }
+
+      setPreviewData({
+        fileName: 'Google_Drive_Document.pdf',
+        totalPages: 25,
+        directDriveStream: `/api/drive-stream/${extractedId}`,
+        samplePages: [
+          {
+            pageNumber: 1,
+            titleBn: titleBn || 'প্রথম অধ্যায়',
+            contentBn: `${titleBn || 'বইটি'} গুগল ড্রাইভ ক্লাউড সার্ভার থেকে সরাসরি ইন-অ্যাপ সুরক্ষিতভাবে প্রদর্শিত হবে।`
+          }
+        ]
+      });
+      setShowPreviewModal(true);
     }
   };
 
@@ -154,9 +232,18 @@ export const UploadBookScreen: React.FC = () => {
       setErrorMessage(isBn ? 'সঠিক বইয়ের মূল্য নির্ধারণ করুন।' : 'Please specify a valid price in BDT.');
       return;
     }
-    if (!pdfFile) {
-      setErrorMessage(isBn ? 'অনুগ্রহ করে আসল PDF ফাইল নির্বাচন করুন।' : 'Please select the original PDF file to upload.');
-      return;
+
+    if (pdfSourceType === 'upload') {
+      if (!pdfFile) {
+        setErrorMessage(isBn ? 'অনুগ্রহ করে আসল PDF ফাইল নির্বাচন করুন।' : 'Please select the original PDF file to upload.');
+        return;
+      }
+    } else {
+      const extracted = driveFileId || extractGoogleDriveId(driveUrl);
+      if (!extracted) {
+        setErrorMessage(isBn ? 'অনুগ্রহ করে সঠিক গুগল ড্রাইভ শেয়ার লিংক দিন।' : 'Please provide a valid Google Drive share link.');
+        return;
+      }
     }
 
     setIsSubmitting(true);
@@ -173,7 +260,14 @@ export const UploadBookScreen: React.FC = () => {
       formData.append('language', bookLanguage);
       formData.append('priceBdt', priceBdt.toString());
       formData.append('isPublished', publishImmediate.toString());
-      formData.append('pdfFile', pdfFile);
+
+      if (pdfSourceType === 'upload' && pdfFile) {
+        formData.append('pdfFile', pdfFile);
+      } else {
+        const extracted = driveFileId || extractGoogleDriveId(driveUrl);
+        formData.append('driveUrl', driveUrl);
+        if (extracted) formData.append('driveFileId', extracted);
+      }
 
       if (coverFile) {
         formData.append('coverFile', coverFile);
@@ -183,19 +277,18 @@ export const UploadBookScreen: React.FC = () => {
 
       setUploadProgress(45);
 
-      // Perform real upload to backend private storage
+      // Perform real upload to backend storage
       const uploadedBook = await adminUploadBookWithPdf(formData, user!.email);
       setUploadProgress(100);
 
       setSuccessMessage(
         isBn
-          ? `সফল! "${uploadedBook.titleBn}" বইটি সফলভাবে আপলোড ও ${publishImmediate ? 'ক্যাটালগে প্রকাশিত' : 'ড্রাফট হিসেবে সংরক্ষিত'} হয়েছে।`
+          ? `সফল! "${uploadedBook.titleBn}" বইটি সফলভাবে ${pdfSourceType === 'drive' ? 'গুগল ড্রাইভ স্টোরেজ সহ' : 'আপলোড ও'} ${publishImmediate ? 'ক্যাটালগে প্রকাশিত' : 'ড্রাফট হিসেবে সংরক্ষিত'} হয়েছে।`
           : `Success! "${uploadedBook.titleBn}" uploaded and ${publishImmediate ? 'published' : 'saved as draft'}.`
       );
 
       await refreshBooks();
 
-      // Navigate to catalogue or dashboard after short feedback
       setTimeout(() => {
         if (publishImmediate) {
           navigateTo('catalogue');
@@ -228,59 +321,53 @@ export const UploadBookScreen: React.FC = () => {
         </button>
 
         <span className="text-xs text-slate-400 font-mono">
-          Admin: {user?.email}
+          {isBn ? 'বই আপলোড মডিউল' : 'Book Upload Module'}
         </span>
       </div>
 
-      {/* Main Upload Card */}
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-md p-6 sm:p-10 space-y-8">
-        <div>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-xs font-bold border border-emerald-200 mb-2">
-            <UploadCloud className="w-3.5 h-3.5 text-emerald-600" />
-            <span>{isBn ? 'সুরক্ষিত পিডিএফ আপলোড ও ক্যাটালগ প্রকাশনা' : 'Protected PDF Upload System'}</span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-            {isBn ? 'নতুন ডিজিটাল বই আপলোড' : 'Upload Digital Book'}
+      {/* Main Card */}
+      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xl p-6 sm:p-10 space-y-8">
+        {/* Header */}
+        <div className="border-b border-slate-200 pb-5">
+          <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+            <UploadCloud className="w-6 h-6 text-emerald-700" />
+            <span>{isBn ? 'নতুন বই আপলোড ও প্রকাশনা' : 'Upload & Publish New Book'}</span>
           </h1>
-          <p className="text-xs sm:text-sm text-slate-500 mt-1">
+          <p className="text-xs text-slate-500 mt-1">
             {isBn
-              ? 'বইয়ের মেটাডাটা, প্রচ্ছদ ও আসল পিডিএফ ফাইল প্রদান করুন। আসল পিডিএফ ফাইলটি প্রাইভেট স্টোরেজে সংরক্ষিত থাকবে।'
-              : 'Provide book metadata, cover artwork, and original PDF. Raw PDFs remain securely in private cloud storage.'}
+              ? 'বইয়ের বিবরণ দিন এবং আসল PDF ফাইল সরাসরি ডিভাইস থেকে আপলোড করুন অথবা গুগল ড্রাইভ লিংক যুক্ত করুন।'
+              : 'Enter book details and attach an original PDF file directly from device or Google Drive link.'}
           </p>
         </div>
 
-        {/* Error Alert */}
+        {/* Status Alerts */}
         {errorMessage && (
-          <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-2.5 text-xs text-rose-800">
+          <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-3 text-xs text-rose-800 animate-shake">
             <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <span className="font-bold block mb-0.5">{isBn ? 'আপলোড সতর্কতা' : 'Upload Alert'}</span>
-              <span>{errorMessage}</span>
-            </div>
+            <div className="flex-1 font-medium">{errorMessage}</div>
+            <button onClick={() => setErrorMessage(null)} className="text-rose-500 hover:text-rose-800">
+              <X className="w-4 h-4" />
+            </button>
           </div>
         )}
 
-        {/* Success Alert */}
         {successMessage && (
-          <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-2.5 text-xs text-emerald-800">
+          <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3 text-xs text-emerald-800">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <span className="font-bold block mb-0.5">{isBn ? 'সফল হয়েছে!' : 'Success!'}</span>
-              <span>{successMessage}</span>
-            </div>
+            <div className="flex-1 font-medium">{successMessage}</div>
           </div>
         )}
 
-        {/* Progress Bar when Submitting */}
+        {/* Progress Bar during submit */}
         {isSubmitting && (
-          <div className="space-y-2 p-4 bg-slate-50 rounded-2xl border border-slate-200">
+          <div className="space-y-1.5 bg-slate-50 p-4 rounded-2xl border border-slate-200">
             <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
-              <span>{isBn ? 'পিডিএফ আপলোড ও মেটাডাটা সংরক্ষণ চলছে...' : 'Uploading PDF & saving metadata...'}</span>
-              <span className="font-mono text-emerald-700 font-bold">{uploadProgress}%</span>
+              <span>{isBn ? 'বই সার্ভারে প্রক্রিয়াকরণ হচ্ছে...' : 'Processing and uploading book...'}</span>
+              <span className="font-mono">{uploadProgress}%</span>
             </div>
-            <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+            <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
               <div
-                className="bg-emerald-600 h-2 rounded-full transition-all duration-300"
+                className="h-full bg-emerald-600 transition-all duration-300"
                 style={{ width: `${uploadProgress}%` }}
               />
             </div>
@@ -383,7 +470,7 @@ export const UploadBookScreen: React.FC = () => {
           />
         </div>
 
-        {/* Field: বইয়ের কভার ছবি (Cover Image) & Button: কভার ছবি নির্বাচন করুন */}
+        {/* Field: বইয়ের কভার ছবি (Cover Image) */}
         <div className="p-6 bg-slate-50 rounded-3xl border border-slate-200 space-y-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
@@ -427,85 +514,236 @@ export const UploadBookScreen: React.FC = () => {
           </div>
         </div>
 
-        {/* Field: PDF বই নির্বাচন করুন (Select PDF File) & Button: PDF নির্বাচন করুন & Button: PDF Preview */}
-        <div className="p-6 bg-emerald-50/50 rounded-3xl border-2 border-dashed border-emerald-300 space-y-4 text-center sm:text-left">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex items-center justify-center sm:justify-start gap-2">
-                <FileText className="w-5 h-5 text-emerald-700" />
-                <h3 className="text-sm font-bold text-slate-900">
-                  {isBn ? 'PDF বই নির্বাচন করুন (Select PDF File) *' : 'Select PDF File *'}
-                </h3>
-              </div>
-              <p className="text-xs text-slate-600">
-                {isBn
-                  ? 'আপনার ডিভাইস থেকে আসল মূল PDF ফাইলটি বাছাই করুন (সর্বোচ্চ ৫০ MB)'
-                  : 'Select original PDF from device storage (max 50 MB)'}
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {/* Button: PDF নির্বাচন করুন */}
-              <button
-                type="button"
-                onClick={() => pdfInputRef.current?.click()}
-                className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
-              >
-                <UploadCloud className="w-4 h-4" />
-                <span>{isBn ? 'PDF নির্বাচন করুন' : 'Select PDF File'}</span>
-              </button>
-              <input
-                ref={pdfInputRef}
-                type="file"
-                accept=".pdf,application/pdf"
-                onChange={handlePdfChange}
-                className="hidden"
-              />
-
-              {/* Button: PDF Preview */}
-              <button
-                type="button"
-                onClick={handlePdfPreview}
-                disabled={!pdfFile || isPreviewLoading}
-                className="px-4 py-2.5 bg-white hover:bg-slate-100 disabled:opacity-40 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
-              >
-                {isPreviewLoading ? (
-                  <div className="w-3.5 h-3.5 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <Eye className="w-4 h-4 text-emerald-700" />
-                )}
-                <span>{isBn ? 'PDF Preview' : 'PDF Preview'}</span>
-              </button>
-            </div>
+        {/* PDF Storage Selector: Local Upload vs Google Drive Server */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <label className="block text-xs font-bold text-slate-900">
+              {isBn ? 'PDF ফাইলের উৎস নির্বাচন করুন (PDF Storage Method) *' : 'PDF Storage Method *'}
+            </label>
+            <span className="text-[11px] text-emerald-700 font-medium">
+              {isBn ? 'গুগল ড্রাইভ অথবা ফাইল আপলোড' : 'Google Drive or Local File'}
+            </span>
           </div>
 
-          {/* Selected PDF File Info Card */}
-          {pdfFile ? (
-            <div className="p-3.5 bg-white rounded-2xl border border-emerald-200 flex items-center justify-between text-xs text-slate-800 shadow-xs">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <FileText className="w-5 h-5 text-emerald-600 shrink-0" />
-                <div className="min-w-0">
-                  <span className="font-bold block truncate">{pdfFile.name}</span>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    {formatFileSize(pdfFile.size)} · application/pdf
-                  </span>
+          {/* Toggle Tabs */}
+          <div className="grid grid-cols-2 p-1.5 bg-slate-100 rounded-2xl border border-slate-200 text-xs font-bold">
+            <button
+              type="button"
+              onClick={() => setPdfSourceType('upload')}
+              className={`py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                pdfSourceType === 'upload'
+                  ? 'bg-white text-emerald-800 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <HardDrive className="w-4 h-4 text-emerald-600" />
+              <span>{isBn ? 'ডিভাইস থেকে ফাইল আপলোড' : 'Direct File Upload'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPdfSourceType('drive')}
+              className={`py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                pdfSourceType === 'drive'
+                  ? 'bg-white text-emerald-800 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Globe className="w-4 h-4 text-sky-600" />
+              <span>{isBn ? 'গুগল ড্রাইভ লিংক (ক্লাউড সার্ভার)' : 'Google Drive Cloud'}</span>
+            </button>
+          </div>
+
+          {/* MODE 1: Direct File Upload */}
+          {pdfSourceType === 'upload' && (
+            <div className="p-6 bg-emerald-50/50 rounded-3xl border-2 border-dashed border-emerald-300 space-y-4 text-center sm:text-left transition-all">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-center sm:justify-start gap-2">
+                    <FileText className="w-5 h-5 text-emerald-700" />
+                    <h3 className="text-sm font-bold text-slate-900">
+                      {isBn ? 'কম্পিউটার বা ফোন থেকে PDF নির্বাচন করুন' : 'Select PDF from Device *'}
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    {isBn
+                      ? 'আপনার ডিভাইস থেকে আসল মূল PDF ফাইলটি বাছাই করুন (সর্বোচ্চ ৫০ MB)'
+                      : 'Select original PDF from device storage (max 50 MB)'}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => pdfInputRef.current?.click()}
+                    className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+                  >
+                    <UploadCloud className="w-4 h-4" />
+                    <span>{isBn ? 'PDF নির্বাচন করুন' : 'Select PDF File'}</span>
+                  </button>
+                  <input
+                    ref={pdfInputRef}
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    onChange={handlePdfChange}
+                    className="hidden"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={handlePdfPreview}
+                    disabled={!pdfFile || isPreviewLoading}
+                    className="px-4 py-2.5 bg-white hover:bg-slate-100 disabled:opacity-40 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                  >
+                    {isPreviewLoading ? (
+                      <div className="w-3.5 h-3.5 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Eye className="w-4 h-4 text-emerald-700" />
+                    )}
+                    <span>{isBn ? 'প্রিভিউ দেখুন' : 'Preview'}</span>
+                  </button>
                 </div>
               </div>
 
-              <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
-                {isBn ? 'ভ্যালিড PDF' : 'Valid PDF'}
-              </span>
+              {pdfFile ? (
+                <div className="p-3.5 bg-white rounded-2xl border border-emerald-200 flex items-center justify-between text-xs text-slate-800 shadow-xs">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <FileText className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="font-bold block truncate">{pdfFile.name}</span>
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        {formatFileSize(pdfFile.size)} · application/pdf
+                      </span>
+                    </div>
+                  </div>
+
+                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                    {isBn ? 'ভ্যালিড PDF' : 'Valid PDF'}
+                  </span>
+                </div>
+              ) : (
+                <div className="text-center py-2 text-xs text-slate-400 italic">
+                  {isBn ? 'এখনও কোনো PDF ফাইল নির্বাচন করা হয়নি।' : 'No PDF file selected yet.'}
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="text-center py-2 text-xs text-slate-400 italic">
-              {isBn ? 'এখনও কোনো PDF ফাইল নির্বাচন করা হয়নি।' : 'No PDF file selected yet.'}
+          )}
+
+          {/* MODE 2: Google Drive Cloud Server */}
+          {pdfSourceType === 'drive' && (
+            <div className="p-6 bg-sky-50/60 rounded-3xl border-2 border-dashed border-sky-300 space-y-5 transition-all">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-5 h-5 text-sky-700" />
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {isBn ? 'গুগল ড্রাইভ ক্লাউড লিংক প্রদান করুন' : 'Enter Google Drive Share Link *'}
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-600">
+                  {isBn
+                    ? 'আপনার গুগল ড্রাইভে PDF টি রেখে লিংকটি দিন। অ্যাপের নিজস্ব প্রক্সি সার্ভার দিয়ে এটি সরাসরি সম্পূর্ণ স্ক্রিনে লোড হবে।'
+                    : 'Store PDFs in your Google Drive and paste the share link. The app streams it directly without CORS errors.'}
+                </p>
+              </div>
+
+              {/* Drive Link Input & Verify Button */}
+              <div className="flex flex-col sm:flex-row gap-2">
+                <div className="relative flex-1">
+                  <Link2 className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="url"
+                    value={driveUrl}
+                    onChange={e => {
+                      setDriveUrl(e.target.value);
+                      setDriveVerificationStatus(null);
+                      const id = extractGoogleDriveId(e.target.value);
+                      if (id) setDriveFileId(id);
+                    }}
+                    placeholder="https://drive.google.com/file/d/1A2B3C.../view?usp=sharing"
+                    className="w-full pl-10 pr-4 py-3 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:border-sky-600 focus:outline-hidden font-mono"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleVerifyDriveLink}
+                    disabled={isVerifyingDrive || !driveUrl.trim()}
+                    className="px-4 py-3 bg-sky-700 hover:bg-sky-800 disabled:opacity-40 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer shrink-0"
+                  >
+                    {isVerifyingDrive ? (
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Check className="w-4 h-4" />
+                    )}
+                    <span>{isBn ? 'লিংক যাচাই করুন' : 'Verify Link'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handlePdfPreview}
+                    disabled={!driveUrl.trim()}
+                    className="px-4 py-3 bg-white hover:bg-slate-100 disabled:opacity-40 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer shrink-0"
+                  >
+                    <Eye className="w-4 h-4 text-sky-700" />
+                    <span>{isBn ? 'প্রিভিউ' : 'Preview'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Verified Card */}
+              {driveVerificationStatus?.verified && (
+                <div className="p-3.5 bg-white rounded-2xl border border-emerald-300 flex items-center justify-between text-xs text-slate-800 shadow-xs animate-fade-in">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="font-bold block text-emerald-900">
+                        {isBn ? 'গুগল ড্রাইভ লিংক সক্রিয় ও প্রমাণিত' : 'Google Drive Link Verified'}
+                      </span>
+                      <span className="text-[11px] text-slate-500 font-mono truncate block">
+                        File ID: {driveFileId} {driveVerificationStatus.sizeFormatted ? `(${driveVerificationStatus.sizeFormatted})` : ''}
+                      </span>
+                    </div>
+                  </div>
+
+                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 shrink-0">
+                    {isBn ? 'স্ট্রিম প্রস্তুত' : 'Stream Ready'}
+                  </span>
+                </div>
+              )}
+
+              {/* Instructions Guide Card */}
+              <div className="p-4 bg-sky-100/60 rounded-2xl border border-sky-200 text-slate-700 text-xs space-y-2">
+                <div className="flex items-center gap-1.5 font-bold text-sky-900">
+                  <Info className="w-4 h-4 text-sky-700" />
+                  <span>{isBn ? '💡 গুগল ড্রাইভকে সার্ভার হিসেবে ব্যবহারের নিয়মাবলী:' : '💡 How to use Google Drive as your server:'}</span>
+                </div>
+                <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-600 pl-1 leading-relaxed">
+                  <li>{isBn ? 'আপনার ব্যক্তিগত বা ব্যবসায়িক গুগল ড্রাইভে PDF ফাইলটি আপলোড করুন।' : 'Upload the PDF to your Google Drive.'}</li>
+                  <li>{isBn ? 'ফাইলের উপর রাইট ক্লিক করে Share (শেয়ার) অপশনে যান।' : 'Right-click the file and click Share.'}</li>
+                  <li>
+                    {isBn ? (
+                      <span>
+                        General access অপশনে অবশ্যই <b>"Anyone with the link" (যেকোনো ব্যক্তি যার কাছে লিংক আছে)</b> সিলেক্ট করুন (Viewer মোডে)।
+                      </span>
+                    ) : (
+                      <span>Set General access to <b>"Anyone with the link can view"</b>.</span>
+                    )}
+                  </li>
+                  <li>{isBn ? '"Copy link" এ ক্লিক করে লিংকটি কপি করে উপরের ঘরে পেস্ট করুন।' : 'Click "Copy link" and paste it into the field above.'}</li>
+                </ol>
+                <p className="text-[10px] text-sky-800 font-medium italic pt-1">
+                  {isBn
+                    ? '✨ সুবিধা: আপনার হোস্টিং সার্ভারে কোনো ফাইল সাইজ লিমিট বা ডিস্ক স্পেস খরচ হবে না, গুগল ড্রাইভ থেকেই সুপারফাস্ট স্ট্রিম হবে।'
+                    : '✨ Benefit: Zero hosting disk space used, unlimited bandwidth, and superfast in-app PDF streaming!'}
+                </p>
+              </div>
             </div>
           )}
         </div>
 
         {/* Action Buttons: Save as Draft | Publish Book | Cancel */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-6 border-t border-slate-200">
-          {/* Button: Cancel */}
           <button
             type="button"
             onClick={() => navigateTo('admin_dashboard')}
@@ -516,7 +754,6 @@ export const UploadBookScreen: React.FC = () => {
           </button>
 
           <div className="flex items-center gap-3 w-full sm:w-auto">
-            {/* Button: Save as Draft */}
             <button
               type="button"
               onClick={() => handleFormSubmit(false)}
@@ -524,10 +761,9 @@ export const UploadBookScreen: React.FC = () => {
               className="flex-1 sm:flex-none px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs"
             >
               <Save className="w-4 h-4 text-slate-300" />
-              <span>{isBn ? 'Save as Draft (খসড়া সংরক্ষণ)' : 'Save as Draft'}</span>
+              <span>{isBn ? 'Save as Draft (খসড়া)' : 'Save as Draft'}</span>
             </button>
 
-            {/* Button: Publish Book */}
             <button
               type="button"
               onClick={() => handleFormSubmit(true)}
@@ -553,7 +789,7 @@ export const UploadBookScreen: React.FC = () => {
                     {isBn ? 'PDF প্রিভিউ ও পৃষ্ঠা বিশ্লেষণ' : 'PDF Preview & Extracted Pages'}
                   </h3>
                   <p className="text-[11px] text-slate-500 font-mono">
-                    {previewData.fileName} · {previewData.totalPages} {isBn ? 'পৃষ্ঠা' : 'pages'}
+                    {previewData.fileName}
                   </p>
                 </div>
               </div>
@@ -569,16 +805,29 @@ export const UploadBookScreen: React.FC = () => {
             <div className="p-6 overflow-y-auto space-y-4 text-xs">
               <div className="p-3 bg-emerald-50 text-emerald-800 rounded-xl border border-emerald-200 font-medium">
                 {isBn
-                  ? 'নির্বাচিত আসল পিডিএফ ফাইলের বাস্তব পাতা প্রিভিউ:'
+                  ? 'নির্বাচিত পিডিএফ ফাইলের আসল পাতা প্রিভিউ:'
                   : 'Real PDF Page Preview:'}
               </div>
 
-              {pdfFile && (
+              {pdfSourceType === 'upload' && pdfFile && (
                 <div className="w-full flex justify-center bg-slate-100 p-4 rounded-2xl border border-slate-200">
                   <PdfCanvasViewer
                     source={pdfFile}
                     currentPage={1}
                     zoomLevel={85}
+                    fitMode="width"
+                    readerTheme="light"
+                  />
+                </div>
+              )}
+
+              {pdfSourceType === 'drive' && previewData.directDriveStream && (
+                <div className="w-full flex justify-center bg-slate-100 p-4 rounded-2xl border border-slate-200">
+                  <PdfCanvasViewer
+                    source={previewData.directDriveStream}
+                    currentPage={1}
+                    zoomLevel={85}
+                    fitMode="width"
                     readerTheme="light"
                   />
                 </div>

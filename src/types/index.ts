@@ -14,6 +14,8 @@ export interface Book {
   fileSizeBytes: number;
   storageIdentifier?: string;
   pdfFileName?: string;
+  pdfUrl?: string;
+  hasPdfDocument?: boolean;
   isPublished: boolean;
   featured?: boolean;
   publishedYear: number;

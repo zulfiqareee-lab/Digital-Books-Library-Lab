@@ -53,6 +53,8 @@ interface DBBook {
   fileSizeBytes: number;
   storageIdentifier?: string;
   pdfFileName?: string;
+  pdfUrl?: string;
+  hasPdfDocument?: boolean;
   isPublished: boolean;
   featured?: boolean;
   publishedYear: number;
@@ -378,6 +380,26 @@ async function startServer() {
     });
   });
 
+  // Protected PDF stream for in-app reader
+  app.get('/api/books/:id/pdf-view', (req: Request, res: Response) => {
+    const book = booksDb.get(req.params.id);
+    if (!book) {
+      return res.status(404).json({ success: false, message: 'বই পাওয়া যায়নি' });
+    }
+
+    if (book.storageIdentifier) {
+      const pdfPath = path.resolve(uploadPdfsDir, book.storageIdentifier);
+      if (fs.existsSync(pdfPath)) {
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', 'inline');
+        res.setHeader('Accept-Ranges', 'bytes');
+        return fs.createReadStream(pdfPath).pipe(res);
+      }
+    }
+
+    return res.status(404).json({ success: false, message: 'পিডিএফ ফাইল পাওয়া যায়নি' });
+  });
+
   // Serve uploaded files statically
   app.use('/uploads', express.static(path.resolve(__dirname, 'uploads')));
 
@@ -512,6 +534,8 @@ async function startServer() {
         fileSizeBytes,
         storageIdentifier,
         pdfFileName,
+        pdfUrl: storageIdentifier ? `/uploads/pdfs/${storageIdentifier}` : undefined,
+        hasPdfDocument: Boolean(storageIdentifier),
         isPublished: String(isPublished) === 'true',
         publishedYear: new Date().getFullYear(),
         samplePages,

@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLibrary } from '../context/LibraryContext';
 import { adminUploadBookWithPdf, adminPreviewPdf } from '../services/api';
 import { CATEGORIES } from '../data/initialBooks';
+import { PdfCanvasViewer } from '../components/PdfCanvasViewer';
 import {
   ArrowLeft,
   UploadCloud,
@@ -568,20 +569,34 @@ export const UploadBookScreen: React.FC = () => {
             <div className="p-6 overflow-y-auto space-y-4 text-xs">
               <div className="p-3 bg-emerald-50 text-emerald-800 rounded-xl border border-emerald-200 font-medium">
                 {isBn
-                  ? 'সার্ভার এই আসল পিডিএফ ফাইলটি প্রক্রিয়া করে অনলাইন পাঠকের জন্য সুরক্ষিত পৃষ্ঠা তৈরি করেছে:'
-                  : 'Server parsed this real PDF and prepared protected reading sample streams:'}
+                  ? 'নির্বাচিত আসল পিডিএফ ফাইলের বাস্তব পাতা প্রিভিউ:'
+                  : 'Real PDF Page Preview:'}
               </div>
 
-              <div className="space-y-3">
-                {previewData.samplePages?.map((page: any, idx: number) => (
-                  <div key={idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-1">
-                    <span className="text-[11px] font-bold text-emerald-700 block">{page.titleBn}</span>
-                    <p className="text-slate-700 leading-relaxed font-serif whitespace-pre-line">
-                      {page.contentBn}
-                    </p>
-                  </div>
-                ))}
-              </div>
+              {pdfFile && (
+                <div className="w-full flex justify-center bg-slate-100 p-4 rounded-2xl border border-slate-200">
+                  <PdfCanvasViewer
+                    source={pdfFile}
+                    currentPage={1}
+                    zoomLevel={85}
+                    readerTheme="light"
+                  />
+                </div>
+              )}
+
+              {previewData.samplePages && previewData.samplePages.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  <p className="font-bold text-slate-700">{isBn ? 'অধ্যায় ও পাঠ্য বিবরণ:' : 'Chapters & Content Stream:'}</p>
+                  {previewData.samplePages?.slice(0, 3).map((page: any, idx: number) => (
+                    <div key={idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-1">
+                      <span className="text-[11px] font-bold text-emerald-700 block">{page.titleBn}</span>
+                      <p className="text-slate-700 leading-relaxed font-serif whitespace-pre-line">
+                        {page.contentBn}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-end">

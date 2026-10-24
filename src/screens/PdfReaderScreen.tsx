@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLibrary } from '../context/LibraryContext';
-import { fetchProtectedPage } from '../services/api';
+import { fetchProtectedPage, getBookPdfSource } from '../services/api';
+import { PdfCanvasViewer } from '../components/PdfCanvasViewer';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -15,7 +16,9 @@ import {
   Download,
   List,
   ShieldCheck,
-  CheckCircle2
+  FileText,
+  Layers,
+  Sparkles
 } from 'lucide-react';
 
 export const PdfReaderScreen: React.FC = () => {
@@ -32,11 +35,50 @@ export const PdfReaderScreen: React.FC = () => {
   const [isLoadingPage, setIsLoadingPage] = useState(false);
   const [showToc, setShowToc] = useState(false);
 
-  const totalPages = book?.totalPages || 120;
+  // PDF Source and Viewer Mode
+  const [pdfSource, setPdfSource] = useState<string | Blob | ArrayBuffer | null>(null);
+  const [isPdfLoading, setIsPdfLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<'pdf' | 'text'>('pdf');
+  const [totalPdfPages, setTotalPdfPages] = useState<number>(book?.totalPages || 100);
+
+  const totalPages = totalPdfPages || book?.totalPages || 100;
   const isOwned = book ? hasEntitlement(book.id) : false;
 
+  // 1. Fetch real PDF source (IndexedDB local blob or remote server URL)
   useEffect(() => {
     if (!book) return;
+
+    let isCancelled = false;
+    setIsPdfLoading(true);
+
+    getBookPdfSource(book).then(src => {
+      if (!isCancelled) {
+        if (src) {
+          setPdfSource(src);
+          setViewMode('pdf');
+        } else {
+          setPdfSource(null);
+          setViewMode('text');
+        }
+        setIsPdfLoading(false);
+      }
+    }).catch(err => {
+      console.warn('Could not locate PDF binary:', err);
+      if (!isCancelled) {
+        setPdfSource(null);
+        setViewMode('text');
+        setIsPdfLoading(false);
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [book]);
+
+  // 2. Fetch fallback protected text page if in text view mode
+  useEffect(() => {
+    if (!book || viewMode !== 'text') return;
     let isCancelled = false;
     setIsLoadingPage(true);
 
@@ -50,7 +92,7 @@ export const PdfReaderScreen: React.FC = () => {
     return () => {
       isCancelled = true;
     };
-  }, [book, currentPage]);
+  }, [book, currentPage, viewMode]);
 
   if (!book) {
     return (
@@ -114,8 +156,10 @@ export const PdfReaderScreen: React.FC = () => {
             <h1 className="text-xs sm:text-sm font-bold truncate text-white leading-tight">
               {isBn ? book.titleBn : book.titleEn}
             </h1>
-            <p className="text-[10px] text-emerald-400 font-medium truncate">
-              {book.authorBn} · {isBn ? 'সুরক্ষিত উন্মুক্ত পাঠকক্ষ' : 'Protected Free Reader'}
+            <p className="text-[10px] text-emerald-400 font-medium truncate flex items-center gap-1.5">
+              <span>{book.authorBn}</span>
+              <span>•</span>
+              <span>{isBn ? 'সুরক্ষিত উন্মুক্ত পাঠকক্ষ' : 'Protected Free Reader'}</span>
             </p>
           </div>
         </div>
@@ -143,6 +187,32 @@ export const PdfReaderScreen: React.FC = () => {
 
         {/* Right: Controls & Purchase CTA */}
         <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Mode Switcher: PDF Page Canvas vs Text View */}
+          {pdfSource && (
+            <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+              <button
+                onClick={() => setViewMode('pdf')}
+                className={`px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
+                  viewMode === 'pdf' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+                title={isBn ? 'পিডিএফ পেজ ভিউ' : 'PDF Page View'}
+              >
+                <Layers className="w-3 h-3" />
+                <span className="hidden md:inline">{isBn ? 'পিডিএফ পাতা' : 'PDF Pages'}</span>
+              </button>
+              <button
+                onClick={() => setViewMode('text')}
+                className={`px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 transition-colors ${
+                  viewMode === 'text' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+                title={isBn ? 'টেক্সট ভিউ' : 'Text View'}
+              >
+                <FileText className="w-3 h-3" />
+                <span className="hidden md:inline">{isBn ? 'টেক্সট মোড' : 'Text'}</span>
+              </button>
+            </div>
+          )}
+
           {/* Table of contents toggle */}
           <button
             onClick={() => setShowToc(!showToc)}
@@ -186,17 +256,17 @@ export const PdfReaderScreen: React.FC = () => {
           </div>
 
           {/* Zoom controls */}
-          <div className="hidden md:flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+          <div className="flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700">
             <button
-              onClick={() => setZoomLevel(z => Math.max(75, z - 15))}
+              onClick={() => setZoomLevel(z => Math.max(70, z - 15))}
               className="p-1.5 text-slate-400 hover:text-white"
               title="Zoom Out"
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
-            <span className="text-[11px] font-mono px-1 text-slate-300">{zoomLevel}%</span>
+            <span className="text-[11px] font-mono px-1 text-slate-300 hidden sm:inline">{zoomLevel}%</span>
             <button
-              onClick={() => setZoomLevel(z => Math.min(175, z + 15))}
+              onClick={() => setZoomLevel(z => Math.min(180, z + 15))}
               className="p-1.5 text-slate-400 hover:text-white"
               title="Zoom In"
             >
@@ -235,108 +305,141 @@ export const PdfReaderScreen: React.FC = () => {
       </header>
 
       {/* Main Reading Canvas */}
-      <main className="flex-1 overflow-auto p-4 sm:p-8 flex items-center justify-center relative">
+      <main className="flex-1 overflow-auto p-3 sm:p-6 flex flex-col items-center justify-start relative">
         {/* Table of Contents Drawer */}
         {showToc && (
           <aside className="absolute top-4 left-4 z-30 w-72 max-w-[85vw] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-3">
             <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
               <span className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-                {isBn ? 'সূচিপত্র ও অধ্যায়' : 'Table of Contents'}
+                {isBn ? 'সূচিপত্র ও নেভিগেশন' : 'Table of Contents'}
               </span>
               <button
                 onClick={() => setShowToc(false)}
-                className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
               >
                 ✕
               </button>
             </div>
             <div className="space-y-1.5 max-h-80 overflow-y-auto text-xs">
-              {book.samplePages.map(page => (
-                <button
-                  key={page.pageNumber}
-                  onClick={() => {
-                    setCurrentPage(page.pageNumber);
-                    setShowToc(false);
-                  }}
-                  className={`w-full text-left px-3 py-2 rounded-xl transition-colors flex items-center justify-between ${
-                    currentPage === page.pageNumber
-                      ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 font-bold'
-                      : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
-                  }`}
-                >
-                  <span className="truncate">{page.titleBn}</span>
-                  <span className="font-mono text-[10px] text-slate-400">{page.pageNumber}</span>
-                </button>
-              ))}
+              {book.samplePages?.length > 0 ? (
+                book.samplePages.map(page => (
+                  <button
+                    key={page.pageNumber}
+                    onClick={() => {
+                      setCurrentPage(page.pageNumber);
+                      setShowToc(false);
+                    }}
+                    className={`w-full text-left px-3 py-2 rounded-xl transition-colors flex items-center justify-between ${
+                      currentPage === page.pageNumber
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 font-bold'
+                        : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    <span className="truncate">{page.titleBn}</span>
+                    <span className="font-mono text-[10px] text-slate-400">পৃষ্ঠা {page.pageNumber}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="text-xs text-slate-500 py-3 text-center">
+                  {isBn ? 'সরাসরি পৃষ্ঠা নম্বর নির্বাচন করুন' : 'Select page number below'}
+                </div>
+              )}
             </div>
           </aside>
         )}
 
-        {/* Server-Rendered Protected Reading Page */}
-        <div
-          style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'top center' }}
-          className={`relative w-full max-w-2xl min-h-[640px] p-8 sm:p-14 rounded-2xl border shadow-xl transition-all duration-150 flex flex-col justify-between ${themeStyles[readerTheme]}`}
-        >
-          {/* Subtle Anti-Copy Security Watermark Stamp */}
-          <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center opacity-[0.035] overflow-hidden rotate-[-25deg]">
-            <p className="text-4xl font-extrabold uppercase tracking-widest text-current whitespace-nowrap">
-              Digital Book Library • Read-Only
-            </p>
-            <p className="text-2xl font-bold uppercase tracking-wider text-current whitespace-nowrap mt-4">
-              বাংলাদেশ ডিজিটাল গ্রন্থালয়
-            </p>
+        {/* View Content: PDF Canvas or Structured Text Fallback */}
+        {viewMode === 'pdf' && pdfSource ? (
+          <div className="w-full max-w-4xl flex flex-col items-center">
+            <PdfCanvasViewer
+              source={pdfSource}
+              currentPage={currentPage}
+              zoomLevel={zoomLevel}
+              readerTheme={readerTheme}
+              watermarkText={`Digital Book Library • Read-Only Online • ${book.titleBn}`}
+              onTotalPagesLoaded={(pages) => setTotalPdfPages(pages)}
+              onError={(err) => {
+                console.warn('PDF canvas error, fallback to text:', err);
+                setViewMode('text');
+              }}
+            />
           </div>
+        ) : (
+          /* Server-Rendered / Local Protected Text Reading Page */
+          <div
+            style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'top center' }}
+            className={`relative w-full max-w-2xl min-h-[640px] p-8 sm:p-14 rounded-2xl border shadow-xl transition-all duration-150 flex flex-col justify-between ${themeStyles[readerTheme]}`}
+          >
+            {/* Subtle Anti-Copy Security Watermark Stamp */}
+            <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center opacity-[0.035] overflow-hidden rotate-[-25deg]">
+              <p className="text-4xl font-extrabold uppercase tracking-widest text-current whitespace-nowrap">
+                Digital Book Library • Read-Only
+              </p>
+              <p className="text-2xl font-bold uppercase tracking-wider text-current whitespace-nowrap mt-4">
+                বাংলাদেশ ডিজিটাল গ্রন্থালয়
+              </p>
+            </div>
 
-          {/* Page Header Header */}
-          <div className="border-b pb-3 mb-6 flex items-center justify-between text-xs opacity-60">
-            <span className="font-medium italic">{book.titleBn}</span>
-            <span>{isBn ? 'পৃষ্ঠা' : 'Page'} {currentPage}</span>
-          </div>
+            {/* Page Header Header */}
+            <div className="border-b pb-3 mb-6 flex items-center justify-between text-xs opacity-60">
+              <span className="font-medium italic">{book.titleBn}</span>
+              <span>{isBn ? 'পৃষ্ঠা' : 'Page'} {currentPage}</span>
+            </div>
 
-          {/* Page Text Body */}
-          <div className="flex-1">
-            {isLoadingPage ? (
-              <div className="py-20 text-center opacity-60 animate-pulse space-y-3">
-                <BookOpen className="w-8 h-8 mx-auto stroke-1" />
-                <p className="text-xs">{isBn ? 'পৃষ্ঠা লোড হচ্ছে...' : 'Loading page stream...'}</p>
-              </div>
-            ) : pageData?.pageData ? (
-              <article className="space-y-4">
-                <h2 className="text-xl sm:text-2xl font-bold font-serif mb-4 pb-2 border-b border-current/10">
-                  {pageData.pageData.titleBn}
-                </h2>
-                <div className="text-sm sm:text-base leading-relaxed sm:leading-loose whitespace-pre-line font-serif">
-                  {pageData.pageData.contentBn}
+            {/* Page Text Body */}
+            <div className="flex-1">
+              {isLoadingPage ? (
+                <div className="py-20 text-center opacity-60 animate-pulse space-y-3">
+                  <BookOpen className="w-8 h-8 mx-auto stroke-1" />
+                  <p className="text-xs">{isBn ? 'পৃষ্ঠা লোড হচ্ছে...' : 'Loading page stream...'}</p>
                 </div>
-                {pageData.pageData.contentEn && (
-                  <div className="mt-8 pt-4 border-t border-current/10 text-xs sm:text-sm italic opacity-85 leading-relaxed font-serif">
-                    {pageData.pageData.contentEn}
+              ) : pageData?.pageData ? (
+                <article className="space-y-4">
+                  <h2 className="text-xl sm:text-2xl font-bold font-serif mb-4 pb-2 border-b border-current/10">
+                    {pageData.pageData.titleBn}
+                  </h2>
+                  <div className="text-sm sm:text-base leading-relaxed sm:leading-loose whitespace-pre-line font-serif">
+                    {pageData.pageData.contentBn}
                   </div>
-                )}
-              </article>
-            ) : (
-              <div className="py-20 text-center opacity-70 space-y-2">
-                <p className="font-bold text-sm">{book.titleBn} · পৃষ্ঠা {currentPage}</p>
-                <p className="text-xs leading-relaxed max-w-md mx-auto">
-                  {isBn
-                    ? 'আপনি অনলাইনে বিনামূল্যে ডিজিটাল বুক লাইব্রেরির মাধ্যমে বইটি পাঠ করছেন। মূল হাই-রেজোলিউশন মুদ্রণ সংস্করণ ডিভাইসে অফলাইনে সংরক্ষণ করতে বিকাশ দিয়ে ক্রয় সম্পন্ন করুন।'
-                    : 'You are reading this book online for free. To keep an offline high-resolution PDF copy, complete a verified bKash purchase.'}
-                </p>
-              </div>
-            )}
-          </div>
+                  {pageData.pageData.contentEn && (
+                    <div className="mt-8 pt-4 border-t border-current/10 text-xs sm:text-sm italic opacity-85 leading-relaxed font-serif">
+                      {pageData.pageData.contentEn}
+                    </div>
+                  )}
+                </article>
+              ) : (
+                <div className="py-20 text-center opacity-70 space-y-3">
+                  <p className="font-bold text-sm">{book.titleBn} · পৃষ্ঠা {currentPage}</p>
+                  <p className="text-xs leading-relaxed max-w-md mx-auto">
+                    {isBn
+                      ? 'আপনি অনলাইনে বিনামূল্যে ডিজিটাল বুক লাইব্রেরির মাধ্যমে বইটি পাঠ করছেন। মূল হাই-রেজোলিউশন মুদ্রণ সংস্করণ ডিভাইসে অফলাইনে সংরক্ষণ করতে বিকাশ দিয়ে ক্রয় সম্পন্ন করুন।'
+                      : 'You are reading this book online for free. To keep an offline high-resolution PDF copy, complete a verified bKash purchase.'}
+                  </p>
+                  {pdfSource && (
+                    <button
+                      onClick={() => setViewMode('pdf')}
+                      className="px-4 py-2 bg-emerald-700 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 shadow"
+                    >
+                      <Layers className="w-4 h-4" />
+                      <span>{isBn ? 'আসল পিডিএফ পেজে ফিরে যান' : 'Switch to Original PDF Pages'}</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
 
-          {/* Page Footer */}
-          <div className="border-t pt-4 mt-8 flex items-center justify-between text-[11px] opacity-60">
-            <span className="flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>{isBn ? 'সুরক্ষিত পড়ার মোড' : 'Protected Reading Mode'}</span>
-            </span>
-            <span className="font-mono font-medium">
-              {currentPage} / {totalPages}
-            </span>
+            {/* Page Footer */}
+            <div className="border-t pt-4 mt-8 flex items-center justify-between text-[11px] opacity-60">
+              <span className="flex items-center gap-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span>{isBn ? 'সুরক্ষিত পড়ার মোড' : 'Protected Reading Mode'}</span>
+              </span>
+              <span className="font-mono font-medium">
+                {currentPage} / {totalPages}
+              </span>
+            </div>
           </div>
-        </div>
+        )}
       </main>
 
       {/* Bottom Floating Control Bar */}
@@ -351,8 +454,8 @@ export const PdfReaderScreen: React.FC = () => {
           <span>{isBn ? 'পূর্ববর্তী পৃষ্ঠা' : 'Previous'}</span>
         </button>
 
-        {/* Page Slider */}
-        <div className="flex-1 max-w-xs flex items-center gap-2">
+        {/* Page Slider & Direct Input */}
+        <div className="flex-1 max-w-sm flex items-center gap-2">
           <input
             type="range"
             min={1}
@@ -361,9 +464,11 @@ export const PdfReaderScreen: React.FC = () => {
             onChange={e => setCurrentPage(parseInt(e.target.value, 10))}
             className="w-full accent-emerald-500 cursor-pointer h-1.5 bg-slate-700 rounded-lg"
           />
-          <span className="font-mono text-xs font-bold text-slate-200 tabular-nums shrink-0">
-            {currentPage}/{totalPages}
-          </span>
+          <div className="flex items-center gap-1 text-xs font-mono font-bold text-slate-200 shrink-0 bg-slate-800 px-2 py-1 rounded-lg border border-slate-700">
+            <span>{currentPage}</span>
+            <span className="text-slate-500">/</span>
+            <span>{totalPages}</span>
+          </div>
         </div>
 
         {/* Next Button */}

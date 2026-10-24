@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useLibrary } from '../context/LibraryContext';
 import { useAuth } from '../context/AuthContext';
-import { requestDownloadToken } from '../services/api';
+import { requestDownloadToken, getBaseUrl } from '../services/api';
+import { getLocalPdf } from '../services/pdfStorage';
 import {
   CheckCircle2,
   Download,
@@ -49,13 +50,34 @@ export const PaymentResultScreen: React.FC = () => {
     setDownloadError(null);
 
     try {
-      // 1. Request short-lived single-use download token from server
-      const tokenRes = await requestDownloadToken(book.id, user.uid);
+      // 1. Check local IndexedDB storage first (e.g. uploaded in APK or offline)
+      const localPdf = await getLocalPdf(book.id);
+      if (localPdf) {
+        const blob = localPdf instanceof Blob ? localPdf : new Blob([localPdf], { type: 'application/pdf' });
+        const blobUrl = URL.createObjectURL(blob);
+        const downloadLink = document.createElement('a');
+        downloadLink.href = blobUrl;
+        const filename = (book.titleEn || book.titleBn || 'digital_book').replace(/[^a-zA-Z0-9_\-\u0980-\u09FF]/g, '_');
+        downloadLink.setAttribute('download', `${filename}.pdf`);
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
+        URL.revokeObjectURL(blobUrl);
+        setDownloadSuccess(true);
+        return;
+      }
 
-      // 2. Trigger verified download stream
+      // 2. Request short-lived single-use download token from server
+      const tokenRes = await requestDownloadToken(book.id, user.uid);
+      const downloadUrl = tokenRes.downloadUrl.startsWith('http')
+        ? tokenRes.downloadUrl
+        : `${getBaseUrl()}${tokenRes.downloadUrl}`;
+
+      // 3. Trigger verified download stream
       const downloadLink = document.createElement('a');
-      downloadLink.href = tokenRes.downloadUrl;
-      downloadLink.setAttribute('download', `${book.titleEn || book.id}.pdf`);
+      downloadLink.href = downloadUrl;
+      const filename = (book.titleEn || book.titleBn || book.id).replace(/[^a-zA-Z0-9_\-\u0980-\u09FF]/g, '_');
+      downloadLink.setAttribute('download', `${filename}.pdf`);
       document.body.appendChild(downloadLink);
       downloadLink.click();
       document.body.removeChild(downloadLink);

@@ -1,5 +1,6 @@
 import { Book, Order, UserEntitlement, BkashConfigStatus } from '../types';
 import { INITIAL_BOOKS, MOCK_ORDERS } from '../data/initialBooks';
+import { saveLocalPdf, getLocalPdf, deleteLocalPdf } from './pdfStorage';
 
 export const CLOUD_BACKEND_URL = 'https://ais-pre-5brtinxp7kzjxdccd7x3ej-172278334925.asia-southeast1.run.app';
 const LOCAL_BOOKS_KEY = 'dlib_custom_books_v1';
@@ -240,6 +241,14 @@ export async function createLocalBookFromFormData(formData: FormData, adminEmail
     }
   ];
 
+  if (pdfFile) {
+    try {
+      await saveLocalPdf(id, pdfFile);
+    } catch (saveErr) {
+      console.warn('Failed to store PDF into local IndexedDB:', saveErr);
+    }
+  }
+
   const newBook: Book = {
     id,
     titleBn,
@@ -255,6 +264,8 @@ export async function createLocalBookFromFormData(formData: FormData, adminEmail
     totalPages,
     fileSizeBytes,
     pdfFileName,
+    pdfUrl: `/api/books/${id}/pdf-view`,
+    hasPdfDocument: Boolean(pdfFile),
     isPublished,
     publishedYear: new Date().getFullYear(),
     publisherBn: 'ডিজিটাল বুক লাইব্রেরি (বাংলাদেশ)',
@@ -270,6 +281,8 @@ export async function createLocalBookFromFormData(formData: FormData, adminEmail
 
 export async function adminUploadBookWithPdf(formData: FormData, adminEmail: string): Promise<Book> {
   const baseUrl = getBaseUrl();
+  const pdfFile = formData.get('pdfFile') as File | null;
+
   try {
     const res = await fetch(`${baseUrl}/api/admin/upload-book`, {
       method: 'POST',
@@ -284,6 +297,9 @@ export async function adminUploadBookWithPdf(formData: FormData, adminEmail: str
     if (res.ok && contentType.includes('application/json')) {
       const data = await res.json();
       if (data.success && data.book) {
+        if (pdfFile) {
+          saveLocalPdf(data.book.id, pdfFile).catch(() => {});
+        }
         saveLocalCustomBook(data.book);
         return data.book;
       }
@@ -416,6 +432,7 @@ export async function adminUpdateBook(id: string, bookData: Partial<Book>, admin
 
 export async function adminDeleteBook(id: string, adminEmail: string) {
   deleteLocalCustomBook(id);
+  deleteLocalPdf(id).catch(() => {});
   try {
     const res = await fetch(`${getBaseUrl()}/api/admin/books/${id}`, {
       method: 'DELETE',
@@ -428,6 +445,34 @@ export async function adminDeleteBook(id: string, adminEmail: string) {
   } catch {
     return true;
   }
+}
+
+export async function getBookPdfSource(book: Book): Promise<string | Blob | ArrayBuffer | null> {
+  // 1. Check offline IndexedDB first
+  try {
+    const localBlob = await getLocalPdf(book.id);
+    if (localBlob) {
+      return localBlob instanceof Blob ? localBlob : new Blob([localBlob], { type: 'application/pdf' });
+    }
+  } catch (err) {
+    console.warn('IndexedDB read error:', err);
+  }
+
+  // 2. Check if book has server URL or storage identifier
+  if (book.storageIdentifier) {
+    return `${getBaseUrl()}/uploads/pdfs/${book.storageIdentifier}`;
+  }
+  if (book.pdfUrl) {
+    const url = book.pdfUrl.startsWith('http') ? book.pdfUrl : `${getBaseUrl()}${book.pdfUrl}`;
+    return url;
+  }
+
+  // 3. Fallback to API stream endpoint
+  if (book.hasPdfDocument) {
+    return `${getBaseUrl()}/api/books/${book.id}/pdf-view`;
+  }
+
+  return null;
 }
 
 export async function adminFetchSales() {
